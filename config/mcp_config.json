@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "wati-api": {
+      "serverUrl": "https://docs.wati.io/mcp"
+    },
+    "chrome-devtools-mcp": {
+      "$typeName": "exa.cascade_plugins_pb.CascadePluginCommandTemplate",
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "env": {}
+    }
+  }
+}
