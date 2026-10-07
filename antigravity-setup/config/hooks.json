@@ -1,0 +1,9 @@
+{
+  "PreInvocation": [
+    {
+      "type": "command",
+      "command": "node C:\\Users\\inc3241\\.gemini\\config\\scripts\\reminder_hook.js",
+      "timeout": 5000
+    }
+  ]
+}
