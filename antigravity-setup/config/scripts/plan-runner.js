@@ -31,12 +31,19 @@ Runner Instructions:
 5. Exit when done.
 `;
 
-function runAgent(planFile) {
+function executePlan(planFile, planPrompt) {
     return new Promise((resolve) => {
         const getTime = () => new Date().toLocaleTimeString();
-        console.log(`  [${getTime()}] [System] Starting agy.exe for ${planFile}...`);
-        const prompt = `${runnerInstructions}\n\nExecute plan: ${planFile}`;
-        const agy = spawn('C:\\Users\\inc3241\\AppData\\Local\\agy\\bin\\agy.exe', ['-p', prompt, '--output-format', 'json']);
+        console.log(`  [${getTime()}] [System] Sending plan to agy.exe: ${planFile}...`);
+        
+        const prompt = `${runnerInstructions}\n\nExecute plan: ${planFile}\n\nPhase Instructions: ${planPrompt || 'Follow the plan file.'}`;
+        
+        // We spawn a fresh agent per plan using Print mode (-p)
+        // This avoids interactive stdin hanging, and naturally provides a fresh "cleared" conversation per plan.
+        const agy = spawn('C:\\Users\\Kaviyarasu\\AppData\\Local\\agy\\bin\\agy.exe', [
+            '-p', prompt,
+            '--output-format', 'json'
+        ]);
         
         let stdoutData = '';
         let currentLine = '';
@@ -50,7 +57,6 @@ function runAgent(planFile) {
             const chunk = data.toString();
             stdoutData += chunk;
             
-            // Simple live progress logging
             const lines = (currentLine + chunk).split('\n');
             currentLine = lines.pop(); // Keep the last incomplete line
             
@@ -58,8 +64,11 @@ function runAgent(planFile) {
                 if (line.trim().startsWith('{')) {
                     try {
                         const parsed = JSON.parse(line);
-                        // If the agent makes a tool call, print a simple progress message
-                        if (parsed.tool_calls && parsed.tool_calls.length > 0) {
+                        
+                        if (parsed.status === 'SUCCESS' || parsed.status === 'ERROR') {
+                            console.log(`  [${getTime()}] [System] agy.exe completed for ${planFile}.`);
+                            resolve(parsed);
+                        } else if (parsed.tool_calls && parsed.tool_calls.length > 0) {
                             for (const tool of parsed.tool_calls) {
                                 if (tool.toolAction || tool.toolSummary) {
                                     console.log(`  -> Progress: ${tool.toolAction || tool.toolSummary}...`);
@@ -69,7 +78,7 @@ function runAgent(planFile) {
                             }
                         }
                     } catch (e) {
-                        // Ignore parse errors on incomplete chunks
+                        // Ignore parse errors
                     }
                 }
             }
@@ -79,19 +88,13 @@ function runAgent(planFile) {
             console.error(`  [${getTime()}] [CLI Internal] ${data.toString().trim()}`);
         });
         
-        agy.on('close', (code) => {
-            console.log(`  [${getTime()}] [System] agy.exe completed for ${planFile}.`);
-            try {
-                // agy outputs JSON per-line, we grab the last status object
-                const lines = stdoutData.trim().split('\n').filter(l => l.trim().startsWith('{'));
-
-                if (lines.length === 0) return resolve({ status: 'ERROR', error: 'No JSON output' });
-                
-                const lastLine = JSON.parse(lines[lines.length - 1]);
-                resolve(lastLine);
-            } catch (e) {
-                resolve({ status: 'ERROR', error: 'Failed to parse JSON output: ' + e.message });
+        agy.once('close', (code) => {
+            if (code !== 0) {
+                resolve({ status: 'ERROR', error: 'agy.exe closed unexpectedly with code ' + code });
             }
+            // If code is 0, it means it exited gracefully. The resolution should have been handled by the JSON output.
+            // But just in case:
+            setTimeout(() => resolve({ status: 'SUCCESS' }), 1000);
         });
     });
 }
@@ -115,11 +118,10 @@ async function run(manifestPath) {
             
             while (attempts < maxAttempts) {
                 attempts++;
-                const result = await runAgent(planFile);
+                const result = await executePlan(planFile, plan.prompt);
                 
                 if (result.status === 'SUCCESS') {
                     console.log(`Plan ${planFile} succeeded.`);
-                    // Save progress to manifest
                     plan.status = 'completed';
                     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
                     break;
@@ -129,22 +131,24 @@ async function run(manifestPath) {
                         await new Promise(r => setTimeout(r, 5000));
                         continue;
                     } else {
-                        console.error(`Agent failed on ${planFile}:`, result.error);
+                        console.error(`Agent failed on ${planFile}:`, result.error || 'Unknown error');
                         throw new Error(`Fatal execution error on ${planFile}`);
                     }
                 }
             }
             if (attempts >= maxAttempts) throw new Error("Max retries exceeded for quota errors");
         }
+        
+        console.log("All plans processed successfully.");
+        
     } catch (e) {
         console.error("Run aborted:", e.message);
         process.exit(1);
     }
 }
 
-module.exports = { validateManifest, runAgent, run };
+module.exports = { validateManifest, executePlan, run };
 
-// If executed directly
 if (require.main === module) {
     const manifestPath = process.argv[2];
     if (!manifestPath) {
