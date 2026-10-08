@@ -11,8 +11,8 @@ try {
     throw new Error("Missing 'plans' array");
   }
   manifest.plans.forEach(plan => {
-    if (!plan.id || !plan.file || !plan.repo) {
-      throw new Error("Plan is missing required fields");
+    if (!plan.id || !plan.file || !plan.repo || !plan.prompt) {
+      throw new Error("Plan is missing required fields (id, file, repo, prompt)");
     }
   });
   console.log("Manifest is valid.");
