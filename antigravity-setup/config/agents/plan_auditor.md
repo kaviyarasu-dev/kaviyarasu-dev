@@ -19,5 +19,6 @@ Check for:
 5. Weak verify commands across the suite.
 6. Risk and manual gates usage (ensuring sensitive plans are gated).
 7. Plan sizes (ensure they are small).
+8. **Depth & Blueprint Enforcement (CRITICAL)**: Every single plan file MUST start with a robust `EXECUTION_CONTRACT` YAML block, and must follow the Mandatory Blueprint (SOLID Principles, Domain Math/Logic, Interfaces, Strict Verification). If ANY plan file lacks this extreme depth, you MUST REJECT the audit and order a rewrite.
 
-Provide a final table (id, name, repo, depends on, gate, verify command, verdict) for the user to approve.
+Provide a final table (id, name, repo, depends on, gate, verify command, prompt, verdict) for the user to approve. If the verdict is REJECTED due to missing depth, explicitly state that the planning agent must rewrite the files.
