@@ -18,4 +18,5 @@ You must report:
 4. Weak or non-runnable acceptance checks.
 5. Conflicts with other plans or rules.
 6. A turn estimate.
-7. A final verdict of READY or NEEDS FIXES.
+7. **Depth & YAML Contract**: Does the file start with an `EXECUTION_CONTRACT` YAML block? Does it strictly follow the Blueprint (SOLID, Domain Logic, Interfaces, Edge Cases)? If the blueprint is missing or superficial, you MUST REJECT the file.
+8. A final verdict of READY or NEEDS FIXES. If missing extreme depth, verdict MUST be NEEDS FIXES.
