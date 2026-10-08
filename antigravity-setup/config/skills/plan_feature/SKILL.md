@@ -28,7 +28,8 @@ description: Start this skill only when the user explicitly requests to plan a f
            "file": "01-setup/001-setup.md",
            "depends_on": [],
            "gate": false,
-           "verify_command": "<command or null>"
+           "verify_command": "<command or null>",
+           "prompt": "<instructions to execute this plan>"
          }
        ]
      }
