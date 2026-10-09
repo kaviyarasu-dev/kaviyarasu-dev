@@ -7,14 +7,14 @@ Plan a feature with Claude Code, then let it build the feature unattended, one p
 Needs Node 20+, Git, and Claude Code. On Windows, Git for Windows (Git Bash) is also needed.
 
 ```
-npx github:kaviyarasu-dev/kaviyarasu-dev
+npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main
 ```
 
 Run the same command again to update. Other options:
 
 ```
-npx github:kaviyarasu-dev/kaviyarasu-dev --dry-run     # show what would change, write nothing
-npx github:kaviyarasu-dev/kaviyarasu-dev --uninstall   # remove what the installer added
+npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main --dry-run     # show what would change, write nothing
+npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main --uninstall   # remove what the installer added
 ```
 
 ## What it installs (into `~/.claude`, or `$CLAUDE_CONFIG_DIR`)

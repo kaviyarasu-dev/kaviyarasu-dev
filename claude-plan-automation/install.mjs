@@ -2,9 +2,9 @@
 // Installs the Claude Code plan automation into ~/.claude (or $CLAUDE_CONFIG_DIR).
 // It copies only the files in ./payload, backs up anything it would overwrite, and adds one
 // SessionStart hook to settings.json. It never touches the rest of settings.json, history or projects.
-//   npx github:kaviyarasu-dev/kaviyarasu-dev            install or update
-//   npx github:kaviyarasu-dev/kaviyarasu-dev --dry-run   show what would change
-//   npx github:kaviyarasu-dev/kaviyarasu-dev --uninstall  remove what this installer added
+//   npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main            install or update
+//   npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main --dry-run   show what would change
+//   npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main --uninstall  remove what this installer added
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

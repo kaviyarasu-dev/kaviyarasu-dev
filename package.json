@@ -1,7 +1,7 @@
 {
   "name": "kaviyarasu-dev",
   "version": "1.0.0",
-  "description": "Installers for Kaviyarasu's tooling. Run with: npx github:kaviyarasu-dev/kaviyarasu-dev",
+  "description": "Installers for Kaviyarasu's tooling. Run with: npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main",
   "private": true,
   "type": "module",
   "bin": { "kaviyarasu-dev": "claude-plan-automation/install.mjs" },
