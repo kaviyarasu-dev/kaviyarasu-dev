@@ -1,6 +1,8 @@
 // Checks the runner runs ITSELF after a session. A session saying "done" counts for nothing
 // until every one of these passes.
 import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { changedBetween } from './git.mjs';
 import { killTree } from './claude.mjs';
@@ -42,11 +44,18 @@ export function changedPaths(repos, fromTrees, toTrees) {
 /**
  * Scope gate. Everything a session changed must be inside the plan's allowed_paths.
  * Always forbidden: .claude/, .env files, .git/, the manifest and plan files.
- * package.json and package-lock.json are always allowed (installs are permitted) and are
- * reported separately as new dependencies.
+ * Dependency manifests and lock files of every common ecosystem (DEP_FILES) are always allowed,
+ * because installs are permitted. They are reported separately as changed dependencies.
  */
+export const DEP_FILES = [
+  'package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb',
+  'composer.json', 'composer.lock', 'requirements.txt', 'pyproject.toml', 'poetry.lock', 'uv.lock', 'Pipfile', 'Pipfile.lock',
+  'go.mod', 'go.sum', 'Cargo.toml', 'Cargo.lock', 'Gemfile', 'Gemfile.lock', 'packages.lock.json', 'pubspec.yaml', 'pubspec.lock',
+  'mix.exs', 'mix.lock', 'Package.resolved', 'gradle.lockfile',
+];
+
 export function scopeCheck({ changed, allowed, extra = [], planDirRel, primaryName }) {
-  const allow = [...allowed, ...extra, '**/package.json', '**/package-lock.json'];
+  const allow = [...allowed, ...extra, ...DEP_FILES.map((f) => `**/${f}`)];
   const forbidden = ['**/.claude/**', '**/.env', '**/.env.*', '**/.git/**', `${primaryName}/${planDirRel}/**`];
   const violations = [];
   for (const p of changed) {
@@ -93,4 +102,30 @@ export function phpLintChanged(repos, changed, env) {
     }
   }
   return { ok: true };
+}
+
+/**
+ * Secret files (.env, .env.*) in each repo root. Git ignores them, so the snapshot, the scope gate and the
+ * rollback cannot see them. Fingerprint them before the run and compare after every plan.
+ */
+export function secretFingerprint(repos) {
+  const out = {};
+  for (const [name, dir] of Object.entries(repos)) {
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files.filter((x) => x === '.env' || x.startsWith('.env.'))) {
+      try { out[`${name}/${f}`] = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, f))).digest('hex'); } catch { /* unreadable */ }
+    }
+  }
+  return out;
+}
+
+export function secretChanges(before, after) {
+  const out = [];
+  for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (!(k in after)) out.push(`${k} (deleted)`);
+    else if (!(k in before)) out.push(`${k} (created)`);
+    else if (before[k] !== after[k]) out.push(`${k} (changed)`);
+  }
+  return out;
 }

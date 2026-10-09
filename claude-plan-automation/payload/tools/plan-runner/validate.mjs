@@ -41,6 +41,13 @@ export function validateFolder(dir, { workspace } = {}) {
   if (m.isolate !== undefined) {
     if (!Array.isArray(m.isolate) || m.isolate.some((k) => !(m.env && k in m.env))) err('"isolate" must list keys that exist in "env"');
   }
+  if (m.permissions !== undefined) {
+    const p = m.permissions;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) err('"permissions" must be an object with optional "allow" and "deny" arrays');
+    else for (const k of ['allow', 'deny']) {
+      if (p[k] !== undefined && (!Array.isArray(p[k]) || p[k].some((x) => typeof x !== 'string' || !x.trim()))) err(`"permissions.${k}" must be an array of non-empty strings`);
+    }
+  }
   for (const key of ['setup', 'gates_each', 'full_gates']) {
     if (m[key] === undefined) continue;
     if (!Array.isArray(m[key])) { err(`"${key}" must be an array`); continue; }

@@ -41,6 +41,17 @@ Other behaviour: a usage-limit hit waits for the reset and retries without using
 - Only one runner per feature (lock file).
 - Never edits `.env`, `.claude/`, `.git/`, the manifest or plan files (scope gate).
 
+## Permissions: any language, any build tool
+
+`config/permissions.json` allows Bash as a whole and lists what is refused. It names no language, so php, node, python, go, cargo, dotnet, maven, gradle, ruby, make and anything new all work with no setup.
+
+- **Refused (deny list):** git changes (commit, push, reset, checkout, stash, `git -C` ...), recursive deletes, sudo and system commands, other shells (`bash -c`, powershell, cmd), network and remote tools (curl, ssh, scp ...), cloud and deploy tools (aws, kubectl, terraform, vercel ...), package publishing (npm, cargo, gem, twine, mvn deploy ...), `.env`, ssh and aws secret files.
+- **Add rules for one project:** put `"permissions": { "allow": [...], "deny": [...] }` in `manifest.json`. Example: `"deny": ["Bash(docker *)"]` for a project that must not touch Docker.
+- **The deny list is best-effort.** A program that can run code (node, php, python ...) can still reach what a rule refuses, for example `node -e` calling git. The real safety is outside the session: the git snapshot and rollback, the scope gate (only `allowed_paths` may change), the secret-file gate, the throwaway `isolate` database, and the final security review.
+- **Secret files:** the runner fingerprints `.env` and `.env.*` in every repo before the run. If a session changes one, the run halts and says so. Git ignores these files, so the runner cannot restore them. It also cannot stop a session from *reading* `.env` through a program it runs.
+- **Dependency files:** lock and manifest files of every common ecosystem (package.json, composer.json, requirements.txt, pyproject.toml, go.mod/go.sum, Cargo.toml/Cargo.lock, Gemfile, ...) may always change, because installs are allowed. Changes are listed in HANDOFF.md under "New or changed dependencies".
+- Only `php -l` (changed PHP files) is a built-in language check. For any other language put its lint, compile or test command in `gates_each` and `full_gates`, or set `"php_lint": false`.
+
 ## Known limits
 
 - Rollback restores files only. It cannot undo database changes (that is why runs use a throwaway database), and it cannot remove packages an install added to `node_modules` (re-run `npm install` after a failed run).

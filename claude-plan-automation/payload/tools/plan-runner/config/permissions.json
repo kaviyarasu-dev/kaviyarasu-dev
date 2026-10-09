@@ -1,22 +1,33 @@
 {
-  "_note": "Rules for unattended plan sessions. Mode is dontAsk: anything not allowed here is refused, never asked. A manifest may add more under its own permissions.allow / permissions.deny.",
-  "allow": [
-    "Read", "Edit", "Write", "Glob", "Grep",
-    "Bash(php *)", "Bash(node *)", "Bash(npm run *)", "Bash(npm install*)", "Bash(npm ci*)",
-    "Bash(npx expo install*)", "Bash(npx eslint*)", "Bash(npx tsc*)", "Bash(composer *)",
-    "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)", "Bash(git ls-files*)",
-    "Bash(mkdir *)", "Bash(mv *)", "Bash(cp *)", "Bash(rm *)",
-    "Bash(cd *)", "Bash(ls*)", "Bash(cat *)", "Bash(grep *)", "Bash(head *)", "Bash(tail *)",
-    "Bash(wc *)", "Bash(echo *)", "Bash(pwd)", "Bash(sed -n*)"
-  ],
+  "_note": "Rules for unattended plan sessions, mode dontAsk (anything not allowed is refused, never asked). Language-neutral on purpose: Bash is allowed as a whole, so any language or build tool works (php, node, python, go, cargo, dotnet, mvn, gradle, ruby, make ...). Safety comes from the deny list below (best-effort: an interpreter can still reach what it denies), from the git rollback, the scope gate and the secret-file gate in run.mjs. A manifest may add rules under its own permissions.allow / permissions.deny.",
+  "allow": ["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
   "deny": [
-    "Bash(git add*)", "Bash(git commit*)", "Bash(git push*)", "Bash(git reset*)", "Bash(git checkout*)",
-    "Bash(git switch*)", "Bash(git restore*)", "Bash(git stash*)", "Bash(git clean*)", "Bash(git rebase*)",
-    "Bash(git merge*)", "Bash(git branch -*)", "Bash(git tag*)", "Bash(git config*)", "Bash(git rm*)",
-    "Bash(rm -r*)", "Bash(rm -f -r*)", "Bash(rm -R*)", "Bash(rm -fr*)", "Bash(rm -rf*)",
-    "Bash(sudo*)", "Bash(curl *)", "Bash(wget *)", "Bash(npm publish*)", "Bash(npm config*)", "Bash(npm login*)",
-    "Bash(npx expo prebuild*)", "Bash(eas *)", "Bash(npx eas*)",
-    "Bash(cat *.env*)", "Bash(grep *.env*)", "Bash(head *.env*)", "Bash(tail *.env*)", "Bash(sed *.env*)",
-    "Read(./.env)", "Read(./.env.*)", "Edit(./.env)", "Edit(./.env.*)", "Write(./.env)", "Write(./.env.*)"
+    "Bash(git add*)", "Bash(git commit*)", "Bash(git push*)", "Bash(git pull*)", "Bash(git fetch*)", "Bash(git reset*)",
+    "Bash(git checkout*)", "Bash(git switch*)", "Bash(git restore*)", "Bash(git stash*)", "Bash(git clean*)",
+    "Bash(git rebase*)", "Bash(git merge*)", "Bash(git cherry-pick*)", "Bash(git revert*)", "Bash(git branch -*)",
+    "Bash(git tag*)", "Bash(git config*)", "Bash(git rm*)", "Bash(git mv*)", "Bash(git remote*)", "Bash(git worktree*)",
+    "Bash(git submodule*)", "Bash(git update-ref*)", "Bash(git -C*)", "Bash(git -c*)", "Bash(git --git-dir*)", "Bash(git --work-tree*)",
+
+    "Bash(rm -r*)", "Bash(rm -R*)", "Bash(rm -f -r*)", "Bash(rm -fr*)", "Bash(rm -rf*)", "Bash(rmdir /s*)", "Bash(rd /s*)", "Bash(del /s*)",
+    "Bash(find * -delete*)", "Bash(find * -exec rm*)", "Bash(shred*)",
+
+    "Bash(sudo*)", "Bash(su *)", "Bash(doas*)", "Bash(shutdown*)", "Bash(reboot*)", "Bash(mkfs*)", "Bash(dd *)", "Bash(format *)",
+    "Bash(chown*)", "Bash(kill*)", "Bash(pkill*)", "Bash(taskkill*)", "Bash(reg *)", "Bash(schtasks*)", "Bash(crontab*)", "Bash(setx*)",
+    "Bash(powershell*)", "Bash(pwsh*)", "Bash(cmd *)", "Bash(cmd.exe*)", "Bash(wsl*)", "Bash(bash -c*)", "Bash(sh -c*)", "Bash(zsh -c*)", "Bash(eval *)",
+
+    "Bash(curl*)", "Bash(wget*)", "Bash(ssh*)", "Bash(scp*)", "Bash(sftp*)", "Bash(rsync*)", "Bash(ftp*)", "Bash(nc *)", "Bash(ncat*)", "Bash(telnet*)",
+    "Bash(gh *)", "Bash(aws *)", "Bash(gcloud*)", "Bash(az *)", "Bash(kubectl*)", "Bash(helm *)", "Bash(terraform*)", "Bash(pulumi*)", "Bash(ansible*)",
+    "Bash(firebase*)", "Bash(vercel*)", "Bash(netlify*)", "Bash(heroku*)", "Bash(flyctl*)", "Bash(wrangler*)", "Bash(serverless*)", "Bash(sls *)",
+    "Bash(eas *)", "Bash(npx eas*)", "Bash(npx expo prebuild*)", "Bash(docker push*)", "Bash(docker login*)",
+
+    "Bash(npm publish*)", "Bash(npm login*)", "Bash(npm adduser*)", "Bash(npm token*)", "Bash(npm owner*)", "Bash(npm config*)", "Bash(npm unpublish*)", "Bash(npm deprecate*)",
+    "Bash(pnpm publish*)", "Bash(yarn publish*)", "Bash(yarn npm*)", "Bash(twine *)", "Bash(cargo publish*)", "Bash(cargo login*)", "Bash(gem push*)",
+    "Bash(dotnet nuget push*)", "Bash(mvn deploy*)", "Bash(gradle publish*)", "Bash(./gradlew publish*)", "Bash(composer config*)",
+
+    "Bash(mysqladmin*)", "Bash(dropdb*)", "Bash(dropuser*)",
+
+    "Bash(.env*)", "Bash(* .env*)", "Bash(*/.env*)", "Bash(*\".env*)", "Bash(*'.env*)", "Bash(*=.env*)", "Bash(*.ssh*)", "Bash(*.aws*)", "Bash(*.npmrc*)", "Bash(*.netrc*)", "Bash(*id_rsa*)", "Bash(*id_ed25519*)",
+    "Read(**/.env)", "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/*.key)", "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.npmrc)", "Read(~/.netrc)",
+    "Edit(**/.env)", "Edit(**/.env.*)", "Edit(**/.git/**)", "Edit(**/.claude/**)"
   ]
 }

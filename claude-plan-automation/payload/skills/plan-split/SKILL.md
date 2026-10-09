@@ -42,9 +42,8 @@ STEP 1 - Write docs/plans/<slug>/
    the checkpoint command from your prompt and go on only when it prints CHECKPOINT <n> OK; run the
    plan's Acceptance commands before reporting done; do not edit manifest.json, HANDOFF.md,
    checkpoint or state files, or anything under .claude/; use the database named in the
-   environment, never another one; run one simple shell command per Bash call (no `;`/`&&`
-   chains, no for loops, no `>` redirects), and treat a denied Bash call as "retry simpler",
-   not as "Bash is off".
+   environment, never another one; treat a refused Bash call (git change, network, deploy, secret file) as "use another
+   way", not as "Bash is off"; write BLOCKED.md only when the plan cannot be done without that command.
 2. manifest.json - strict JSON, exactly this shape:
    { "feature": "<slug>",
      "defaults": { "max_attempts": 3, "max_turns": 60, "timeout_min": 45, "idle_min": 10, "model": "sonnet" },
@@ -54,6 +53,7 @@ STEP 1 - Write docs/plans/<slug>/
      "setup": [ { "repo": "<repo>", "cmd": "<command that creates the test database, applies migrations>" } ],
      "gates_each": [ { "repo": "<repo>", "cmd": "<lint or syntax command>", "if_changed": ["<repo>/**/*.php"] } ],
      "full_gates": [ { "repo": "<repo>", "cmd": "<full test or typecheck command>" } ],
+     "permissions": { "deny": [] },
      "final_review": true,
      "plans": [ { "id": "001", "file": "001-name.md", "repos": ["<repo folder name>"],
                   "depends_on": [], "est_turns": 30, "model": "sonnet or opus (omit for the default)",
@@ -68,6 +68,11 @@ STEP 1 - Write docs/plans/<slug>/
      one (the real name is in .env.example; for example <real>_test) and list that key under
      "isolate". Never copy a real secret into the manifest. Migrations run only against that
      throwaway database. If the project has no database, leave env, isolate and setup out.
+   - "permissions" is optional: extra "allow" or "deny" rules for this project only (for example "Bash(docker *)").
+     Leave it out unless the project needs it. "php_lint": false turns off the built-in PHP check for a project with no PHP.
+   - Any language works: the runner allows all Bash except a deny list (git changes, network, deploy,
+     publish, secret files). Put the project's own lint, compile and test commands in gates_each,
+     full_gates and each verify. Dependency and lock files of every ecosystem may always change.
    - est_turns is your honest estimate. Use model "opus" only for a plan that is truly hard.
    - Commands run through the system shell. Use plain commands, no cd; the repo field sets the folder.
    - allowed_paths start with the repo folder name and list only what the plan needs. package.json

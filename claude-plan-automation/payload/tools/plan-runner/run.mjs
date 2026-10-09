@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { validateFolder } from './validate.mjs';
 import { toplevel, isGitRepo, dirtyPaths, snapshot, restore, changedBetween, patchBetween, fileAt, branch } from './lib/git.mjs';
 import { runClaude, findGitBash, killTree, activePids } from './lib/claude.mjs';
-import { changedPaths, scopeCheck, runList, phpLintChanged } from './lib/gates.mjs';
+import { changedPaths, scopeCheck, runList, phpLintChanged, DEP_FILES, secretFingerprint, secretChanges } from './lib/gates.mjs';
 import { RUNS_ROOT, runDirFor, loadState, saveState, loadCheckpoints, checkpointsPath, acquireLock } from './lib/state.mjs';
 import { toast, keepAwake } from './lib/system.mjs';
 import { log, setLogFile, sleep, readJson, writeJsonAtomic, toPosix, tail, fmtDuration } from './lib/util.mjs';
@@ -153,7 +153,7 @@ async function main() {
     saveState(runDir, st);
   }
 
-  ctx = { st, repos, manifest, defaults, env, gitBash, snapAll, equalTrees, idxFile, every };
+  ctx = { st, repos, manifest, defaults, env, gitBash, snapAll, equalTrees, idxFile, every, secretsBefore: secretFingerprint(repos) };
 
   if (flag('--dry-run')) {
     log('System', 'Dry run. Order of plans:');
@@ -317,6 +317,13 @@ async function acceptance(plan, ps) {
   const sc = scopeCheck({ changed, allowed: plan.allowed_paths, extra: plan.allow_extra || [], planDirRel, primaryName });
   if (!sc.ok) return { ok: false, failure: `SCOPE GATE: the session changed files it must not touch:\n${sc.violations.join('\n')}` };
 
+  const sec = secretChanges(ctx.secretsBefore, secretFingerprint(repos));
+  if (sec.length) {
+    rollbackTo(ps.startTrees, cur, path.join(runDir, 'plans', plan.id), 'secrets', ps);
+    ps.status = 'failed'; ps.lastFailure = `secret files changed: ${sec.join(', ')}`; saveState(runDir, ctx.st);
+    halt(`Plan ${plan.id} changed secret files: ${sec.join(', ')}. Git ignores them, so the runner cannot restore them. Put them back by hand, then run the same command again.`);
+  }
+
   if (manifest.php_lint !== false) {
     const pl = phpLintChanged(repos, changed, gateEnv());
     if (!pl.ok) return { ok: false, failure: pl.failure };
@@ -472,7 +479,7 @@ CHECKPOINTS: after you finish each numbered step, run this exact command:
   node "${cp}" <step number>
 It runs that step's own checks and records a restore point. Go to the next step only when it prints "CHECKPOINT <n> OK". If it refuses, fix the problem and run it again. Never skip a step and never edit checkpoint or state files.
 ${resume}${fail}
-Shell: run ONE simple command per Bash call (php, node, git, ls, cat, grep). Do not chain with ; or &&, and do not use for loops, $(...), variable assignments or > redirects (use the Write tool to create files). A denied Bash call does NOT mean Bash is off: retry with a simpler single command. Write BLOCKED.md for this only if "php -v" itself is refused twice.
+Shell: use any build, test or language tool the project needs. A Bash call can be refused for a deny rule (git changes, network, deploy, publish, secret files). A refusal does NOT mean Bash is off: use another way (the Write tool to create files) and keep going. Write BLOCKED.md for a refusal only when the plan truly cannot be done without that command.
 
 Reminders (the full rules are in INSTRUCTIONS.md): never ask the user a question; never commit, push or change git state; if you truly cannot continue, write BLOCKED.md in ${toPosix(planDir)} with the reason and what you tried, then stop. When every step is checkpointed, run the Acceptance commands, then reply with the "Report back" section.`;
 }
@@ -494,6 +501,11 @@ function depChanges(startTrees, cur) {
     if (!b) continue;
     for (const [k, v] of Object.entries(b)) if (!a || !(k in a)) out.push(`${n}: +${k}@${v}`); else if (a[k] !== v) out.push(`${n}: ~${k} ${a[k]} -> ${v}`);
     if (a) for (const k of Object.keys(a)) if (!(k in b)) out.push(`${n}: -${k}`);
+  }
+  for (const [n, d] of Object.entries(ctx.repos)) {
+    for (const f of DEP_FILES.filter((x) => x !== 'package.json' && x !== 'package-lock.json')) {
+      if (fileAt(d, startTrees[n], f) !== fileAt(d, cur[n], f)) out.push(`${n}: ${f} changed`);
+    }
   }
   return out;
 }
