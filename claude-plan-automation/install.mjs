@@ -11,7 +11,26 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+const REPO_URL = 'https://github.com/kaviyarasu-dev/kaviyarasu-dev.git';
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// npx keeps an old copy of a URL it has already run and does not re-download it, so a teammate could
+// get an out-of-date installer and payload. To always install the newest files, this script clones the
+// repo (HTTPS, no ssh key needed) and runs the installer found in that clone. --local skips this step.
+if (!process.argv.includes('--local')) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-automation-'));
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  const clone = spawnSync('git', ['clone', '--depth', '1', '--quiet', REPO_URL, tmp], { env, encoding: 'utf8', timeout: 90000, shell: process.platform === 'win32' });
+  const fresh = path.join(tmp, 'claude-plan-automation', 'install.mjs');
+  if (clone.status === 0 && fs.existsSync(fresh)) {
+    const r = spawnSync(process.execPath, [fresh, '--local', ...process.argv.slice(2)], { stdio: 'inherit' });
+    fs.rmSync(tmp, { recursive: true, force: true });
+    process.exit(r.status ?? 1);
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+  console.log('WARN  Could not download the latest files (is GitHub reachable?). Using the copy bundled with this command, which may be out of date.');
+}
+
 const payload = path.join(here, 'payload');
 const version = JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8')).version;
 const args = new Set(process.argv.slice(2));

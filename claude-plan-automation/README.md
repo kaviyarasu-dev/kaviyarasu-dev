@@ -10,7 +10,7 @@ Needs Node 20+, Git, and Claude Code. On Windows, Git for Windows (Git Bash) is 
 npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main
 ```
 
-Run the same command again to update. Other options:
+Run the same command again to update. The installer always downloads the newest files from GitHub itself (npx keeps old copies of a URL, so it cannot be trusted to do that). Other options:
 
 ```
 npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main --dry-run     # show what would change, write nothing
