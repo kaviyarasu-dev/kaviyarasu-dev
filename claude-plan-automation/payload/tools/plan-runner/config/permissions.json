@@ -1,0 +1,22 @@
+{
+  "_note": "Rules for unattended plan sessions. Mode is dontAsk: anything not allowed here is refused, never asked. A manifest may add more under its own permissions.allow / permissions.deny.",
+  "allow": [
+    "Read", "Edit", "Write", "Glob", "Grep",
+    "Bash(php *)", "Bash(node *)", "Bash(npm run *)", "Bash(npm install*)", "Bash(npm ci*)",
+    "Bash(npx expo install*)", "Bash(npx eslint*)", "Bash(npx tsc*)", "Bash(composer *)",
+    "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)", "Bash(git ls-files*)",
+    "Bash(mkdir *)", "Bash(mv *)", "Bash(cp *)", "Bash(rm *)",
+    "Bash(cd *)", "Bash(ls*)", "Bash(cat *)", "Bash(grep *)", "Bash(head *)", "Bash(tail *)",
+    "Bash(wc *)", "Bash(echo *)", "Bash(pwd)", "Bash(sed -n*)"
+  ],
+  "deny": [
+    "Bash(git add*)", "Bash(git commit*)", "Bash(git push*)", "Bash(git reset*)", "Bash(git checkout*)",
+    "Bash(git switch*)", "Bash(git restore*)", "Bash(git stash*)", "Bash(git clean*)", "Bash(git rebase*)",
+    "Bash(git merge*)", "Bash(git branch -*)", "Bash(git tag*)", "Bash(git config*)", "Bash(git rm*)",
+    "Bash(rm -r*)", "Bash(rm -f -r*)", "Bash(rm -R*)", "Bash(rm -fr*)", "Bash(rm -rf*)",
+    "Bash(sudo*)", "Bash(curl *)", "Bash(wget *)", "Bash(npm publish*)", "Bash(npm config*)", "Bash(npm login*)",
+    "Bash(npx expo prebuild*)", "Bash(eas *)", "Bash(npx eas*)",
+    "Bash(cat *.env*)", "Bash(grep *.env*)", "Bash(head *.env*)", "Bash(tail *.env*)", "Bash(sed *.env*)",
+    "Read(./.env)", "Read(./.env.*)", "Edit(./.env)", "Edit(./.env.*)", "Write(./.env)", "Write(./.env.*)"
+  ]
+}
