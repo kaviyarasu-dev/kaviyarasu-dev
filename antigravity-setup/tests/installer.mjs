@@ -33,7 +33,7 @@ const CLAUDE_FILES = payloadCount(path.join(REPO, 'claude-plan-automation', 'pay
   const c = fresh('claude');
   let r = run(ROUTER, ['--local'], { CLAUDE_CONFIG_DIR: c });
   ok('router with no name installs the Claude setup', r.code === 0 && r.out.includes(`${CLAUDE_FILES} added, 0 updated, 0 unchanged`), r.out.slice(-400));
-  ok('Claude: 18 files installed', CLAUDE_FILES === 18 && walk(c).filter((f) => !f.startsWith('backups/') && f !== 'settings.json' && f !== '.plan-automation.json').length === 18);
+  ok('Claude: 19 files installed', CLAUDE_FILES === 19 && walk(c).filter((f) => !f.startsWith('backups/') && f !== 'settings.json' && f !== '.plan-automation.json').length === 19);
   ok('Claude: the version is printed', r.out.includes(`v${VERSION}`));
   r = run(ROUTER, ['--local'], { CLAUDE_CONFIG_DIR: c });
   ok('Claude: second run reports everything unchanged', r.code === 0 && r.out.includes(`0 added, 0 updated, ${CLAUDE_FILES} unchanged`), r.out.slice(-300));
@@ -155,7 +155,7 @@ const cfgB = path.join(B, 'config');
 
   const C2 = fresh('clone-claude');
   r = run(CLAUDE_INSTALL, [], { CLAUDE_CONFIG_DIR: C2, KAVIYARASU_REPO_URL: url });
-  ok('clone: the Claude installer still clones and installs 18 files', r.code === 0 && r.out.includes(`${CLAUDE_FILES} added`), r.out.slice(-400));
+  ok('clone: the Claude installer still clones and installs 19 files', r.code === 0 && r.out.includes(`${CLAUDE_FILES} added`), r.out.slice(-400));
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

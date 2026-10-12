@@ -24,7 +24,7 @@ The command can also be written with a name: add `claude` after the URL for this
 | Path | What |
 |---|---|
 | `tools/plan-runner/` | The unattended runner (`run.mjs`, `validate.mjs`, `checkpoint.mjs`, `config/permissions.json`) |
-| `skills/plan-feature`, `skills/plan-split`, `skills/grill-me` | The `/plan-feature`, `/plan-split` and `/grill-me` commands |
+| `skills/plan-feature`, `skills/plan-split`, `skills/grill-me`, `skills/goal` | The `/plan-feature`, `/plan-split`, `/grill-me` and `/goal` commands |
 | `agents/plan-*.md`, `agents/requirements-reviewer.md` | Fresh-eyes reviewers used by the skills |
 | `hooks/planning-context.sh` | Reminds Claude to re-read the planning files after a chat is compacted |
 | `settings.json` | One `SessionStart` hook is added. Nothing else in the file changes. |
@@ -36,6 +36,8 @@ It does not touch your model, plugins, permissions, history, projects or MCP set
 1. In Claude Code, inside your project: `/plan-feature <idea>`, then `/clear`, then `/plan-split <slug>`.
 2. In a separate terminal, in the project folder: `node ~/.claude/tools/plan-runner/run.mjs run <slug>`
 3. If it stops, read `~/.claude/plan-runs/<repo>__<slug>/REPORT.md`, fix the cause, and run the same command again to resume.
+
+For a smaller job you do not need a plan: `/goal <what to finish and how we will know it is done>` keeps Claude working in the current chat until every check passes (or it is blocked and says why). It is not unattended; use the runner for that.
 
 The runner never commits or pushes. More detail: `~/.claude/tools/plan-runner/README.md`.
 
