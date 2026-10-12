@@ -17,6 +17,8 @@ npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarba
 npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main --uninstall   # remove what the installer added
 ```
 
+The command can also be written with a name: add `claude` after the URL for this setup, or `antigravity` for the Antigravity (agy) version in [`../antigravity-setup/`](../antigravity-setup/README.md). With no name it installs this one, exactly as before.
+
 ## What it installs (into `~/.claude`, or `$CLAUDE_CONFIG_DIR`)
 
 | Path | What |

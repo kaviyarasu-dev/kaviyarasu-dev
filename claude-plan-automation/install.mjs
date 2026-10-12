@@ -11,8 +11,16 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const REPO_URL = 'https://github.com/kaviyarasu-dev/kaviyarasu-dev.git';
+const REPO_URL = process.env.KAVIYARASU_REPO_URL || 'https://github.com/kaviyarasu-dev/kaviyarasu-dev.git';
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// "antigravity" belongs to the other installer. An old copy of this command that npx kept in its cache does not know that word,
+// and would install the Claude setup instead, so hand it over here. (The current router never sends it here.)
+if (process.argv.slice(2).includes('antigravity')) {
+  const rest = process.argv.slice(2).filter((a) => a !== 'antigravity');
+  const r = spawnSync(process.execPath, [path.join(here, '..', 'antigravity-setup', 'install.mjs'), ...rest], { stdio: 'inherit' });
+  process.exit(r.status ?? 1);
+}
 
 // npx keeps an old copy of a URL it has already run and does not re-download it, so a teammate could
 // get an out-of-date installer and payload. To always install the newest files, this script clones the
