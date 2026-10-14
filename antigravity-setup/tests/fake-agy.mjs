@@ -9,7 +9,7 @@ const argv = process.argv.slice(2);
 const home = process.env.USERPROFILE || process.env.HOME || '';
 
 if (argv[0] === 'models') { // `agy models`: free, no model call
-  const list = process.env.FAKE_MODELS ? JSON.parse(process.env.FAKE_MODELS) : ['gemini-3.8-flash-high', 'gemini-3.8-flash-low', 'gemini-3.1-pro-high'];
+  const list = process.env.FAKE_MODELS ? JSON.parse(process.env.FAKE_MODELS) : ['gemini-3.8-flash-high', 'gemini-3.8-flash-low', 'gemini-3.1-pro-high', 'claude-opus-4-6-thinking'];
   console.log('Fetching available models...');
   for (const m of list) console.log(`${m}\t${m} (fake)`);
   process.exit(process.env.FAKE_MODELS_FAIL ? 1 : 0);

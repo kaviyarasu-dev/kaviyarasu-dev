@@ -18,7 +18,8 @@ tell me to finish /plan-feature first. Then read the spec it points to, requirem
 WHY
 Each plan file is run by a fresh `claude -p` session with no memory and no way to ask questions,
 and nobody is there to approve anything. A vague plan makes that session guess, and a wrong guess
-can break everything after it. The runner (~/.claude/tools/plan-runner) checks every plan with its
+can break everything after it. The runner (installed at $HOME/.claude/tools/plan-runner, or under the folder
+named by CLAUDE_CONFIG_DIR) checks every plan with its
 own commands and never trusts the session's "done".
 
 FILE SPLITTING RULE (strict)
@@ -94,7 +95,8 @@ STEP 1 - Write docs/plans/<slug>/
 4. HANDOFF.md - one heading, "# Handoff". The runner appends to it after each plan.
 
 STEP 2 - Script check (a machine, not a model)
-Run: node ~/.claude/tools/plan-runner/validate.mjs docs/plans/<slug>
+Run: node $HOME/.claude/tools/plan-runner/validate.mjs docs/plans/<slug>
+($HOME works in PowerShell and in Git Bash. Do not use ~: PowerShell does not expand it when it starts node.)
 Show the output. Fix every ERROR and re-run until it prints VALID. Read every WARN and fix the
 ones that matter. If the file does not exist, run the same checks by hand with commands: manifest
 parses; ids unique; every file named exists; depends_on points only to earlier ids; every plan has
@@ -117,7 +119,8 @@ Ask for approval and make the changes I ask for. Then set STATE.md: phase: plans
 
 STEP 5 - Tell me how to run it
 Say exactly: "Open a separate terminal in <primary repo> and run:
-node ~/.claude/tools/plan-runner/run.mjs run <slug>
+node $HOME/.claude/tools/plan-runner/run.mjs run <slug>
+($HOME works in PowerShell and in Git Bash. Do not use ~.)
 Both repos must have no uncommitted changes first. It never commits. When it stops, read
-~/.claude/plan-runs/<repo>__<slug>/REPORT.md. Fix the cause and run the same command again to resume."
+$HOME/.claude/plan-runs/<repo>__<slug>/REPORT.md. Fix the cause and run the same command again to resume."
 Do not start the runner yourself.

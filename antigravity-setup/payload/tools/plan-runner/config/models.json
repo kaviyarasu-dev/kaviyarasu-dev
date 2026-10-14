@@ -2,7 +2,7 @@
   "_note": "Manifests written for the Claude runner say model: sonnet or opus. This maps those names to agy model names (run `agy models` to see the list). A manifest may also name an agy model directly, or set agy_model on a plan or in defaults. The runner checks every model against `agy models` before it starts.",
   "models": {
     "sonnet": "gemini-3.8-flash-high",
-    "opus": "gemini-3.1-pro-high",
+    "opus": "claude-opus-4-6-thinking",
     "haiku": "gemini-3.8-flash-low"
   },
   "default": "sonnet",

@@ -34,12 +34,12 @@ It does not touch your model, plugins, permissions, history, projects or MCP set
 ## Use
 
 1. In Claude Code, inside your project: `/plan-feature <idea>`, then `/clear`, then `/plan-split <slug>`.
-2. In a separate terminal, in the project folder: `node ~/.claude/tools/plan-runner/run.mjs run <slug>`
-3. If it stops, read `~/.claude/plan-runs/<repo>__<slug>/REPORT.md`, fix the cause, and run the same command again to resume.
+2. In a separate terminal, in the project folder: `node $HOME/.claude/tools/plan-runner/run.mjs run <slug>` (use `$HOME`, not `~`: PowerShell does not expand `~` when it starts node).
+3. If it stops, read `$HOME/.claude/plan-runs/<repo>__<slug>/REPORT.md`, fix the cause, and run the same command again to resume.
 
 For a smaller job you do not need a plan: `/goal <what to finish and how we will know it is done>` keeps Claude working in the current chat until every check passes (or it is blocked and says why). It is not unattended; use the runner for that.
 
-The runner never commits or pushes. More detail: `~/.claude/tools/plan-runner/README.md`.
+The runner never commits or pushes. More detail: [payload/tools/plan-runner/README.md](payload/tools/plan-runner/README.md) (or `$HOME/.claude/tools/plan-runner/README.md`).
 
 ## For the maintainer
 

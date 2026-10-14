@@ -135,8 +135,8 @@ function install() {
   if (updated && !dry) say(`Old copies are in ${backupDir}`);
   if (check !== 0) fail('Installed run.mjs failed its syntax check.');
   say('\nNext: restart Claude Code, then use /plan-feature <idea>, /plan-split <slug>, and run the plan with:');
-  say('  node ~/.claude/tools/plan-runner/run.mjs run <slug>');
-  say('Update later by running the same command again.');
+  say('  node $HOME/.claude/tools/plan-runner/run.mjs run <slug>');
+  say('($HOME works in PowerShell and in Git Bash; do not use ~.) Update later by running the same command again.');
 }
 
 function remove() {

@@ -11,16 +11,19 @@ never commits, and can always be resumed.
 3. In a **separate terminal** (not inside Claude Code), from the main repo:
 
 ```
-node ~/.claude/tools/plan-runner/run.mjs run <slug>
+node $HOME/.claude/tools/plan-runner/run.mjs run <slug>
 ```
+
+Use `$HOME`, not `~`. PowerShell does not expand `~` when it starts `node`; `$HOME` works in PowerShell and in Git Bash.
+If you installed with `CLAUDE_CONFIG_DIR`, use that folder instead of `$HOME/.claude`.
 
 - Stop: Ctrl+C. The current plan is rolled back the next time you start.
 - Resume after a stop or failure: run the same command again.
 - Start over: add `--reset` (only when the repos are clean).
 - Look without running: `run.mjs status <slug>` or `run.mjs run <slug> --dry-run`.
-- Check a plan folder only: `node ~/.claude/tools/plan-runner/validate.mjs docs/plans/<slug>`.
+- Check a plan folder only: `node $HOME/.claude/tools/plan-runner/validate.mjs docs/plans/<slug>`.
 
-Everything the run writes is in `~/.claude/plan-runs/<repo>__<slug>/`: `state.json`, `run.log`,
+Everything the run writes is in `$HOME/.claude/plan-runs/<repo>__<slug>/`: `state.json`, `run.log`,
 `REPORT.md` (also copied to the plan folder), raw `session-N.jsonl` per session, and `.patch` files
 for any work that was rolled back.
 

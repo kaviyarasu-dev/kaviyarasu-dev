@@ -228,7 +228,7 @@ function preflight() {
   }
   const probe = probeAgy(env, primary);
   if (!probe.ok) refuse(`agy could not start${noIsolation ? '' : ' in its isolated HOME'}: ${probe.error}${noIsolation ? '' : '\nIf agy cannot sign in from the isolated HOME on this computer, run with --no-isolation (then the session itself is not restricted).'}`);
-  const need = new Set([reviewModel(), ...manifest.plans.map(modelFor)]);
+  const need = new Set([...(manifest.final_review === false ? [] : [reviewModel()]), ...manifest.plans.map(modelFor)]);
   for (const m of need) if (!probe.slugs.includes(m)) refuse(`The model "${m}" is not available in agy. Run "agy models" and fix config/models.json or the manifest (model / agy_model). Available: ${probe.slugs.join(', ')}`);
   log('System', `agy OK. Models in use: ${[...need].join(', ')}.${noIsolation ? '' : ' Each session runs in its own throwaway HOME.'}`);
 }
