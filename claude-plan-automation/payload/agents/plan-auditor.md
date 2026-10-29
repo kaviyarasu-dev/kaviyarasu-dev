@@ -25,6 +25,12 @@ Check and report:
 7. SIZE AND SPLIT: any plan bigger than about 60 turns. Any S or M feature split into several plans
    without a reason (reasons allowed: over 60 turns, or an irreversible or external-side-effect step).
    Every step in the manifest has its own verify, and a split point has a green checkpoint.
+8. SKIPPABLE WORK: every step has its own verify that FAILS before the step is done and PASSES after;
+   no "if_changed" in a step or plan verify; every item a step asks for is covered by its verify or by
+   "human_check". Any item covered by neither is a serious finding: the runner cannot notice if it is skipped.
+9. IMPOSSIBLE TASKS: any step that needs a file a session may never change (.git, the real .env, the plan
+   folder, agent settings, hooks, sub-agents, skills or workflows, or anything outside the project repos).
+   It must move to "human_check" with the exact text to paste.
 
 Output: the coverage table, then findings most serious first, each with the plan id and a
 concrete fix. Say "no findings" if clean.

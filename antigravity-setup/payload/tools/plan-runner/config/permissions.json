@@ -1,5 +1,5 @@
 {
-  "_note": "Rules for unattended plan sessions. agy has no 'never ask, refuse instead' flag, so the runner gives each session its own throwaway HOME with a generated settings.json and hooks.json. Anything not allowed there is refused, never asked. Only commands are allowed explicitly: agy itself allows reading and writing files inside the workspace folders (the repos and the plan folder) and, as measured, also reading a file outside them, so credentials are protected by name (deny_paths), not by location. URLs and MCP tools are refused because no rule allows them. Language-neutral on purpose: all commands are allowed except the lists below. Layer 1 is the PreToolUse hook (guard.mjs + lib/rules.mjs): deny_commands, deny_paths, deny_write_paths, allow_paths and the built-in text rules. Layer 2 is settings_deny, written into the session's settings.json for agy to enforce by itself (RE2 regex, literal file names; wildcards in file targets are not supported). Both layers are best effort: a program that can run code can still reach what a rule refuses. The real safety is outside the session: git rollback, scope gate, secret-file gate, HEAD check, throwaway isolate database, final review. A manifest may add rules under permissions.deny: 'Bash(pattern)' adds a command rule, 'Read(glob)' and 'Edit(glob)' add path rules.",
+  "_note": "Rules for unattended plan sessions. agy has no 'never ask, refuse instead' flag, so the runner gives each session its own throwaway HOME with a generated settings.json and hooks.json. Anything not allowed there is refused, never asked. Only commands are allowed explicitly: agy itself allows reading and writing files inside the workspace folders (the repos and the plan folder) and, as measured, also reading a file outside them, so credentials are protected by name (deny_paths), not by location. URLs and MCP tools are refused because no rule allows them. Language-neutral on purpose: all commands are allowed except the lists below. Layer 1 is the PreToolUse hook (guard.mjs + lib/rules.mjs): deny_commands, deny_paths, deny_write_paths, allow_paths, the built-in text rules, and the project scope the runner adds per run (file writes only inside the project repos, the temp folder and the session HOME; never into the plan folder except BLOCKED.md). Agent rule and doc files (.agents/rules, .claude/rules) are open; agent settings, hooks, skills and workflows are not. Layer 2 is settings_deny, written into the session's settings.json for agy to enforce by itself (RE2 regex, literal file names; wildcards in file targets are not supported). Both layers are best effort: a program that can run code can still reach what a rule refuses. The real safety is outside the session: git rollback, scope gate, secret-file gate, HEAD check, throwaway isolate database, final review. A manifest may add rules under permissions.deny: 'Bash(pattern)' adds a command rule, 'Read(glob)' and 'Edit(glob)' add path rules.",
   "allow": ["command(*)"],
   "deny_commands": [
     "git add*", "git commit*", "git push*", "git pull*", "git fetch*", "git reset*", "git checkout*", "git switch*", "git restore*",
@@ -26,7 +26,9 @@
     "**/.env.example", "**/.env.sample", "**/.env.template", "**/.env.dist"
   ],
   "deny_write_paths": [
-    "**/.agents/**", "**/.agent/**", "**/.gemini/**", "**/.claude/**"
+    "**/.agents/hooks.json", "**/.agents/hooks/**", "**/.agents/skills/**", "**/.agents/workflows/**",
+    "**/.agent/hooks.json", "**/.agent/hooks/**", "**/.agent/skills/**", "**/.agent/workflows/**", "**/.gemini/**",
+    "**/.claude/settings*.json", "**/.claude/hooks/**", "**/.claude/agents/**", "**/.claude/skills/**", "**/.claude/commands/**"
   ],
   "settings_deny": [
     "command(regex:(?i).*\\bgit\\s+(?:add|commit|push|pull|fetch|reset|checkout|switch|restore|stash|clean|rebase|merge|cherry-pick|revert|tag|config|rm|mv|remote|worktree|submodule|update-ref|clone|init|am|bisect|filter-branch)\\b.*)",
@@ -35,6 +37,6 @@
     "command(regex:(?i).*\\b(?:npm|pnpm|yarn)\\s+(?:publish|login|adduser|token|owner|unpublish|deprecate)\\b.*)",
     "read_file(.env)", "read_file(.env.local)", "read_file(.env.production)", "read_file(.env.development)", "read_file(.env.test)", "read_file(.env.staging)",
     "write_file(.env)", "write_file(.env.local)", "write_file(.env.production)", "write_file(.env.development)", "write_file(.env.test)", "write_file(.env.staging)",
-    "read_file(.git)", "write_file(.git)", "write_file(.agents)", "write_file(.agent)", "write_file(.gemini)", "write_file(.claude)"
+    "read_file(.git)", "write_file(.git)", "write_file(.gemini)"
   ]
 }

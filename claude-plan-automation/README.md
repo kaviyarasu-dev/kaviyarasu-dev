@@ -35,7 +35,9 @@ It does not touch your model, plugins, permissions, history, projects or MCP set
 
 1. In Claude Code, inside your project: `/plan-feature <idea>`, then `/clear`, then `/plan-split <slug>`.
 2. In a separate terminal, in the project folder: `node $HOME/.claude/tools/plan-runner/run.mjs run <slug>` (use `$HOME`, not `~`: PowerShell does not expand `~` when it starts node).
-3. If it stops, read `$HOME/.claude/plan-runs/<repo>__<slug>/REPORT.md`, fix the cause, and run the same command again to resume.
+3. Read `$HOME/.claude/plan-runs/<repo>__<slug>/REPORT.md`, sections 1 to 3 first (done differently from the plan, changed outside the plan, needs a person). If it stopped, fix the cause in the plan file or the environment (not the code by hand) and run the same command again: steps that passed are kept and re-checked.
+
+No step can be skipped: every step must be checkpointed, every step's check runs again at the end, and each session must report what it did not do (anything not done stops the run). Each step gets 3 tries, and every failed try is saved in full in `plans/<id>/failures.log`.
 
 For a smaller job you do not need a plan: `/goal <what to finish and how we will know it is done>` keeps Claude working in the current chat until every check passes (or it is blocked and says why). It is not unattended; use the runner for that.
 

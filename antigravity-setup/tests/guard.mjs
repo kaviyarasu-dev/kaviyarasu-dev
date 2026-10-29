@@ -27,7 +27,7 @@ const DENY = [
   'curl http://x', 'curl.exe http://x', 'Invoke-WebRequest http://x', 'iwr http://x', 'irm http://x', "(New-Object Net.WebClient).DownloadString('x')", 'wget x', 'ssh host', 'scp a b:c', 'cd x && curl y',
   'rm -rf node_modules', 'rm -r x', 'rm -fr x', 'RM -RF x', 'rm -f -r x', 'rm --recursive x', 'Remove-Item x -Recurse -Force', 'Remove-Item -Recurse x', 'ri x -r', 'rmdir /s /q x', 'del /s x', 'find . -delete', 'echo a; rm -rf x',
   'cat .env', 'type .env', 'Get-Content .env.local', 'echo X > .env', 'cp .env x', 'node -e "require(\'fs\').readFileSync(\'.env\')"', 'Get-Content C:\\Users\\x\\.ssh\\id_rsa',
-  'cat ~/.aws/credentials', 'cat id_rsa', 'type .npmrc', 'ls .git/', 'cat .git/config', 'Set-Content .agents/hooks.json x', 'dir .claude/', 'type C:\\Users\\x\\.gemini\\config\\hooks.json',
+  'cat ~/.aws/credentials', 'cat id_rsa', 'type .npmrc', 'ls .git/', 'cat .git/config', 'Set-Content .agents/hooks.json x', 'type .claude/settings.json', 'cat .claude/hooks/lint.sh', 'Copy-Item x .agents/skills/y','type C:\\Users\\x\\.gemini\\config\\hooks.json',
   'cat C:\\Users\\x\\.gemini\\plan-runs\\r__s\\state.json', 'dir C:\\run\\agy-home', 'cp a .env.production',
   'Start-Process git', 'powershell -c x', 'pwsh -c x', 'cmd /c dir', 'bash -c "git push"', 'npm publish', 'npm config get x', 'sudo x', 'docker push x', 'docker login', 'kubectl apply -f x',
   'Invoke-Expression "x"', 'iex x', 'Set-ExecutionPolicy Bypass', 'taskkill /f /im x', 'Stop-Process -Id 1', 'eas build', 'npx eas build', 'gh pr create', 'aws s3 ls', 'terraform apply',
@@ -41,7 +41,7 @@ const ALLOW = [
   'del file.txt', 'echo ssh', 'echo hello', 'php -l a.php', 'composer install', 'pip install x', 'python -m pytest', 'go test ./...', 'cargo build', 'dotnet test',
   'mvn -q test', './gradlew test', 'make test', 'Select-String -Path a.txt -Pattern "x"', 'grep -rn "TODO" src', 'ls -la', 'mkdir x', 'cd x; npm test', 'node scripts/format.js', 'docker compose up -d',
   'docker build .', 'cat .github/workflows/ci.yml', 'ls .gitignore', 'type .gitattributes', 'Get-Content README.md', 'node scripts/env.js', 'npx jest --runInBand', 'rm -f a b', 'echo $env:FOO', 'sort az.txt',
-  'node assert.mjs has src/a.js "foo\\(bar\\)"', 'npm ci', 'yarn install', 'pnpm test', 'git diff HEAD',
+  'node assert.mjs has src/a.js "foo\\(bar\\)"', 'npm ci', 'yarn install', 'pnpm test', 'git diff HEAD', 'dir .claude/', 'cat .claude/rules/mobile-api.md', 'Get-Content .agents/rules/a.md',
 ];
 for (const c of DENY) ok(`deny: ${c}`, run(c).decision === 'deny', `-> ${run(c).decision}`);
 for (const c of ALLOW) ok(`allow: ${c}`, run(c).decision === 'ask', `-> ${JSON.stringify(run(c)).slice(0, 160)}`);
@@ -50,11 +50,11 @@ const W = 'C:\\ws';
 const FD = [
   ['write_to_file', `${W}\\.env`], ['write_to_file', `${W}\\.env.local`], ['write_to_file', `${W}\\app\\.ENV`], ['write_to_file', `${W}\\key.pem`], ['replace_file_content', `${W}\\.env`],
   ['multi_replace_file_content', `${W}\\.git\\config`], ['view_file', `${W}\\.env`], ['view_file', 'C:\\Users\\me\\.ssh\\id_rsa'], ['view_file', `${W}\\.git\\config`], ['view_file', `${W}\\deploy\\server.key`],
-  ['write_to_file', `${W}\\.agents\\hooks.json`], ['write_to_file', 'C:\\Users\\me\\.gemini\\config\\x'], ['write_to_file', `${W}\\.claude\\settings.json`], ['sed_file', `${W}\\.env.production`],
+  ['write_to_file', `${W}\\.agents\\hooks.json`], ['write_to_file', `${W}\\.claude\\hooks\\lint.sh`], ['replace_file_content', `${W}\\.agents\\skills\\x\\SKILL.md`], ['write_to_file', 'C:\\Users\\me\\.gemini\\config\\x'], ['write_to_file', `${W}\\.claude\\settings.json`], ['sed_file', `${W}\\.env.production`],
 ];
 const FA = [
   ['write_to_file', `${W}\\src\\a.php`], ['write_to_file', `${W}\\.env.example`], ['view_file', `${W}\\.env.example`], ['view_file', `${W}\\src\\x.js`], ['view_file', `${W}\\.agents\\skills\\x\\SKILL.md`],
-  ['write_to_file', `${W}\\docs\\plans\\x\\BLOCKED.md`], ['replace_file_content', `${W}\\src\\env.js`], ['write_to_file', `${W}\\.github\\workflows\\ci.yml`], ['write_to_file', `${W}\\.gitignore`],
+  ['write_to_file', `${W}\\docs\\plans\\x\\BLOCKED.md`], ['replace_file_content', `${W}\\src\\env.js`], ['write_to_file', `${W}\\.github\\workflows\\ci.yml`], ['write_to_file', `${W}\\.claude\\rules\\mobile-api.md`], ['replace_file_content', `${W}\\.agents\\rules\\a.md`], ['write_to_file', `${W}\\.gitignore`],
 ];
 for (const [t, p] of FD) ok(`file deny: ${t} ${p}`, file(t, p).decision === 'deny');
 for (const [t, p] of FA) ok(`file allow: ${t} ${p}`, file(t, p).decision === 'ask');
@@ -69,6 +69,18 @@ ok('manifest Read rule', decide(extra, { name: 'view_file', args: { AbsolutePath
 ok('manifest Edit rule blocks writes only', decide(extra, { name: 'write_to_file', args: { TargetFile: 'C:\\ws\\vendor\\a.php' } }).decision === 'deny' && decide(extra, { name: 'view_file', args: { AbsolutePath: 'C:\\ws\\vendor\\a.php' } }).decision === 'ask');
 ok('unsupported manifest entries are reported', extra.unsupported.length === 1 && extra.unsupported[0] === 'Weird(thing)');
 ok('refusal tells the session it is not "shell off"', /does NOT mean/.test(run('git commit').reason) && /BLOCKED\.md/.test(run('git commit').reason));
+
+// the project scope the runner adds per run: file writes only inside the repos (and temp / the session HOME), not into the plan folder
+const scoped = compileRules(cfg, [], { scope: { roots: ['C:\\ws\\app', 'C:\\ws\\api'], planDir: 'C:\\ws\\app\\docs\\plans\\feat', allowWrite: ['C:\\Temp'] } });
+const sw = (p, extra = {}) => decide(scoped, { name: 'write_to_file', args: { TargetFile: p, ...extra } }).decision;
+ok('scope: a write inside a repo is allowed', sw('C:\\ws\\app\\src\\a.js') === 'ask');
+ok('scope: a write in the second repo is allowed (any case, any slash)', sw('c:/ws/API/src/b.js') === 'ask');
+ok('scope: a write outside the project is refused', sw('C:\\ws\\other\\a.js') === 'deny' && sw('C:\\Users\\me\\x.txt') === 'deny');
+ok('scope: a write in temp is allowed', sw('C:\\Temp\\x.txt') === 'ask');
+ok('scope: the plan folder is refused, BLOCKED.md is not', sw('C:\\ws\\app\\docs\\plans\\feat\\manifest.json') === 'deny' && sw('C:\\ws\\app\\docs\\plans\\feat\\BLOCKED.md') === 'ask');
+ok('scope: file content that starts with "/" is not a path', sw('C:\\ws\\app\\src\\a.js', { CodeContent: '/** a comment */\nexport {}' }) === 'ask');
+ok('scope: reading outside the project is not refused by the scope', decide(scoped, { name: 'view_file', args: { AbsolutePath: 'C:\\ws\\other\\a.js' } }).decision === 'ask');
+ok('a refusal never tells the session to skip', !/skip/i.test(run('git commit').reason));
 
 // the read-only mode used by the final review: reading is fine, nothing else is
 const ro = compileRules(cfg, [], { readOnly: true });

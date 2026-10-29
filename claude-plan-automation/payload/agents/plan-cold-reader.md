@@ -20,5 +20,11 @@ Report:
 6. Anything in the plan that conflicts with CLAUDE.md or INSTRUCTIONS.md.
 7. Your estimate of how many turns it takes, and whether it fits in about 60. Check that the
    numbered steps in the plan match the manifest steps, and that each step's verify can run.
+8. SKIPPABLE WORK: for every step, list each item it asks for and say which check proves it. Name every
+   item no check covers and that is not in "human_check": it can be skipped unnoticed. Name every step
+   whose check would already pass before the work is done (a weak check).
+9. Every task that needs a file a session may never change (.git, the real .env, the plan folder, agent
+   settings, hooks, sub-agents, skills or workflows, or anything outside the project repos). Such a task
+   must be a "human_check", not a step.
 
 End with one line: READY or NEEDS FIXES. Be strict. A kind answer here is a failure later.

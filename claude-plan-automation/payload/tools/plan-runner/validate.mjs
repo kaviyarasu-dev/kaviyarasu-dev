@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Deterministic plan checker (a machine, not a model).
+// Deterministic plan checker (a machine, not a model). Same manifest format as the Antigravity runner, so one plan folder runs on either.
 // Usage: node validate.mjs <plan folder> [--workspace <dir that holds the repo folders>]
 // Exit 0 = valid, 1 = errors. The runner runs the same checks before it starts.
 import fs from 'node:fs';
@@ -10,13 +10,89 @@ import { matchesAny } from './lib/util.mjs';
 const SECTIONS = ['Goal', 'Read first', 'Steps', 'Do not touch', 'Acceptance', 'If blocked', 'Report back'];
 const TEST_FILE = /[\w./\\-]+(?:_test\.php|Test\.php|\.test\.[cm]?[jt]sx?|\.spec\.[cm]?[jt]sx?)/g;
 
+/** Split a command line into arguments like a shell would, but leave backslashes alone (Windows paths and regexes). */
+export function shellSplit(cmd) {
+  const out = [];
+  let cur = '';
+  let quote = null;
+  let any = false;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      else if (quote === '"' && c === '\\' && cmd[i + 1] === '"') { cur += '"'; i++; }
+      else cur += c;
+    } else if (c === '"' || c === "'") { quote = c; any = true; }
+    else if (/\s/.test(c)) { if (cur || any) out.push(cur); cur = ''; any = false; }
+    else cur += c;
+  }
+  if (cur || any) out.push(cur);
+  return out;
+}
+
+const compiles = (src, flags) => { try { new RegExp(src, flags); return null; } catch (e) { return e.message; } };
+
+/**
+ * Regex arguments in a verify command must compile, otherwise the check can fail (or worse, pass) for the wrong
+ * reason. assert.mjs arguments are exact (it is a JS regex), so a bad one is an error. For grep -E/-P, rg and
+ * Select-String the dialect differs from JavaScript, so a bad one is only a warning.
+ */
+export function regexProblems(cmd) {
+  const errors = [];
+  const warnings = [];
+  const t = shellSplit(cmd);
+  const ai = t.findIndex((x) => /(^|[\\/])assert\.mjs$/.test(x));
+  if (ai >= 0) {
+    const kind = t[ai + 1];
+    if (['has', 'none', 'count'].includes(kind)) {
+      const src = t[ai + 3];
+      if (src === undefined) errors.push('assert.mjs ' + kind + ' has no regex argument');
+      else {
+        const msg = compiles(src, kind === 'count' ? 'gm' : (t[ai + 4] || 'm'));
+        if (msg) errors.push('regex /' + src + '/ does not compile: ' + msg);
+      }
+    } else if (!['exists', 'json'].includes(kind)) errors.push('assert.mjs: unknown check "' + kind + '"');
+  }
+  for (let i = 0; i < t.length; i++) {
+    const w = t[i].toLowerCase();
+    let src;
+    if (['grep', 'egrep', 'rg'].includes(w)) {
+      const opts = t.slice(i + 1);
+      const extended = w !== 'grep' || opts.some((o) => /^-[a-zA-Z]*[EP]/.test(o));
+      if (!extended) continue;
+      const e = opts.findIndex((o) => o === '-e');
+      src = e >= 0 ? opts[e + 1] : opts.find((o) => !o.startsWith('-'));
+    } else if (['select-string', 'sls'].includes(w)) {
+      const p = t.findIndex((o, j) => j > i && /^-pattern$/i.test(o));
+      if (p >= 0 && !t.some((o, j) => j > i && /^-simplematch$/i.test(o))) src = t[p + 1];
+    }
+    if (src !== undefined) {
+      const msg = compiles(src, '');
+      if (msg) warnings.push('pattern "' + src + '" in ' + t[i] + ' may not compile (' + msg + ')');
+    }
+  }
+  return { errors, warnings };
+}
+
+/** The file paths an assert.mjs command checks (relative ones only; paths with variables are skipped). */
+export function assertPaths(cmd) {
+  const t = shellSplit(cmd);
+  const ai = t.findIndex((x) => /(^|[\\/])assert\.mjs$/.test(x));
+  if (ai < 0) return [];
+  const kind = t[ai + 1];
+  const list = kind === 'exists' ? t.slice(ai + 2) : ['has', 'none', 'count', 'json'].includes(kind) && t[ai + 2] !== undefined ? [t[ai + 2]] : [];
+  return list.filter((p) => p && !/[{}$%*?]/.test(p) && !path.isAbsolute(p) && !/^[A-Za-z]:/.test(p)).map((p) => p.replace(/\\/g, '/').replace(/^\.\//, ''));
+}
+
+const OLD_FORMAT =['repo', 'verify_command', 'prompt', 'gate'];
+
 export function validateFolder(dir, { workspace } = {}) {
   const errors = [];
   const warnings = [];
   const err = (m) => errors.push(m);
   const warn = (m) => warnings.push(m);
   const slug = path.basename(dir);
-  const ws = workspace || path.dirname(path.dirname(path.dirname(dir))); // <repo>/docs/plans/<slug> -> parent of <repo>
+  const ws = workspace || path.dirname(path.dirname(path.dirname(path.dirname(dir)))); // <repo>/docs/plans/<slug> -> the folder that holds <repo>
 
   for (const f of ['INSTRUCTIONS.md', 'HANDOFF.md']) {
     if (!fs.existsSync(path.join(dir, f))) err(`${f} is missing`);
@@ -29,10 +105,21 @@ export function validateFolder(dir, { workspace } = {}) {
   if (m.feature !== slug) err(`manifest "feature" is "${m.feature}" but the folder is "${slug}"`);
   if (!Array.isArray(m.plans) || m.plans.length === 0) { err('"plans" must be a non-empty array'); return { errors, warnings }; }
 
-  const cmdOk = (c, where, repos) => {
+  const old = m.plans.filter((p) => p && typeof p === 'object' && (('repo' in p && !('repos' in p)) || 'verify_command' in p || 'prompt' in p));
+  if (old.length) {
+    err('This manifest is in the OLD Antigravity format (plan fields ' + OLD_FORMAT.filter((f) => old.some((p) => f in p)).join(', ') + '). The runner uses the same format as the Claude one. Convert each plan: repo -> "repos": ["<repo>"], verify_command -> "verify": ["<command>"], and add "allowed_paths", "est_turns", "depends_on" and numbered "steps" (each with its own "verify"). Easiest: run /plan-split <slug> again.');
+    return { errors, warnings };
+  }
+
+  const cmdOk = (c, where, repos, { check = false } = {}) => {
     const cmd = typeof c === 'string' ? c : c?.cmd;
     if (typeof cmd !== 'string' || !cmd.trim()) { err(`${where}: command is empty or not a string`); return; }
     if (typeof c === 'object' && c.repo && repos && !repos.includes(c.repo)) err(`${where}: repo "${c.repo}" is not in this plan's repos`);
+    // A step or plan check with if_changed is skipped when the session skipped the work (nothing changed), so it would pass.
+    if (check && typeof c === 'object' && c.if_changed) err(`${where}: "if_changed" is only allowed in gates_each. In a step or plan verify it skips the check exactly when the work was skipped`);
+    const rp = regexProblems(cmd);
+    for (const e of rp.errors) err(`${where}: ${e}`);
+    for (const w of rp.warnings) warn(`${where}: ${w}`);
   };
 
   if (m.env !== undefined) {
@@ -75,7 +162,7 @@ export function validateFolder(dir, { workspace } = {}) {
       }
     }
     if (!Array.isArray(p.verify) || p.verify.length === 0) err(`${w}: verify must be a non-empty array of commands`);
-    else p.verify.forEach((c, i) => cmdOk(c, `${w} verify[${i}]`, repos));
+    else p.verify.forEach((c, i) => cmdOk(c, `${w} verify[${i}]`, repos, { check: true }));
     if (typeof p.est_turns !== 'number' || p.est_turns <= 0) err(`${w}: est_turns must be a positive number`);
     else if (p.est_turns > 60) warn(`${w}: est_turns ${p.est_turns} is over 60. Split it at a green checkpoint.`);
     if (p.model !== undefined && !['sonnet', 'opus', 'haiku'].includes(p.model)) err(`${w}: model must be sonnet, opus or haiku`);
@@ -85,10 +172,8 @@ export function validateFolder(dir, { workspace } = {}) {
     else p.steps.forEach((s, i) => {
       if (s.n !== i + 1) err(`${w}: steps must be numbered 1..N in order (found ${s.n} at position ${i + 1})`);
       if (!s.title) err(`${w} step ${i + 1}: title is missing`);
-      if (s.verify !== undefined) {
-        if (!Array.isArray(s.verify)) err(`${w} step ${i + 1}: verify must be an array`);
-        else s.verify.forEach((c, j) => cmdOk(c, `${w} step ${i + 1} verify[${j}]`, repos));
-      }
+      if (!Array.isArray(s.verify) || s.verify.length === 0) err(`${w} step ${i + 1}: verify must be a non-empty array of commands (a step without its own check can be skipped unnoticed)`);
+      else s.verify.forEach((c, j) => cmdOk(c, `${w} step ${i + 1} verify[${j}]`, repos, { check: true }));
     });
 
     // plan body
@@ -102,8 +187,14 @@ export function validateFolder(dir, { workspace } = {}) {
         if (hit.index < pos) err(`${w}: section "${s}" is out of order`);
         pos = hit.index;
       }
-      if (Array.isArray(p.steps)) for (const s of p.steps) {
-        if (!new RegExp(`^#{2,4}\\s*Step\\s+${s.n}\\b`, 'im').test(body)) err(`${w}: plan file has no heading "### Step ${s.n}: ..."`);
+      if (Array.isArray(p.steps)) {
+        for (const s of p.steps) {
+          if (!new RegExp(`^#{2,4}\\s*Step\\s+${s.n}\\b`, 'im').test(body)) err(`${w}: plan file has no heading "### Step ${s.n}: ..."`);
+        }
+        // a step in the plan file that the manifest does not know is never checkpointed or checked
+        for (const mt of body.matchAll(/^#{2,4}\s*Step\s+(\d+)\b/gim)) {
+          if (Number(mt[1]) > p.steps.length) err(`${w}: plan file has "Step ${mt[1]}" but the manifest has only ${p.steps.length} step(s); add it to the manifest steps (with its own verify) or remove it`);
+        }
       }
       for (const bad of ['as discussed', 'TBD', 'TODO', 'handle edge cases', 'etc.']) {
         if (body.toLowerCase().includes(bad.toLowerCase())) warn(`${w}: plan file contains "${bad}" (vague)`);
@@ -127,6 +218,18 @@ export function validateFolder(dir, { workspace } = {}) {
         const full = `${repo}/${rel}`;
         if (!fs.existsSync(path.join(ws, repo, rel)) && !matchesAny(thisAllowed, full)) {
           err(`${w}: verify names test file "${full}" which does not exist and no plan up to this one is allowed to create it`);
+        }
+      }
+    }
+
+    // files that assert.mjs checks must exist or be created by this or an earlier plan, else the check can never pass
+    for (const c of cmds) {
+      const cmd = typeof c === 'string' ? c : c?.cmd || '';
+      const repo = (typeof c === 'object' && c.repo) || repos[0];
+      for (const rel of assertPaths(cmd)) {
+        const full = `${repo}/${rel}`;
+        if (!fs.existsSync(path.join(ws, repo, rel)) && !matchesAny(thisAllowed, full)) {
+          err(`${w}: a check names "${full}", which does not exist and no plan up to this one lists it in allowed_paths`);
         }
       }
     }

@@ -20,7 +20,9 @@ npx --yes https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main antigrav
 1. `/plan-feature <idea>` in agy: an interview, then a reviewed spec.
 2. Start a fresh agy session, then `/plan-split <slug>`: plan files, a validated manifest, fresh-eyes review.
 3. In a **separate terminal**, from the main repo: `node $HOME/.gemini/tools/plan-runner/run.mjs run <slug>` (use `$HOME`, not `~`: PowerShell does not expand `~` when it starts node).
-4. Read `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md`. If it stopped, fix the cause and run the same command again.
+4. Read `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md`, sections 1 to 3 first (done differently from the plan, changed outside the plan, needs a person). If it stopped, fix the cause in the plan file or the environment (not the code by hand) and run the same command again: steps that passed are kept and re-checked.
+
+No step can be skipped: every step must be checkpointed, every step's check runs again at the end, and each session must report what it did not do (anything not done stops the run). Each step gets 3 tries, and every failed try is saved in full in `plans/<id>/failures.log`.
 
 Details: [GUIDE.md](GUIDE.md) (step by step), [payload/tools/plan-runner/README.md](payload/tools/plan-runner/README.md) (what the runner does and its limits), [INSTRUCTIONS.md](INSTRUCTIONS.md) (the rules every plan session follows).
 

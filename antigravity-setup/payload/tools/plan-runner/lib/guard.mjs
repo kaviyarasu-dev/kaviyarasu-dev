@@ -17,7 +17,7 @@ try {
   for await (const chunk of process.stdin) raw += chunk;
   const payload = JSON.parse(raw);
   const cfg = JSON.parse(fs.readFileSync(path.join(here, 'guard-rules.json'), 'utf8'));
-  const rules = compileRules(cfg.permissions, cfg.manifestDeny || [], { readOnly: !!cfg.readOnly });
+  const rules = compileRules(cfg.permissions, cfg.manifestDeny || [], { readOnly: !!cfg.readOnly, scope: cfg.scope || null });
   const verdict = decide(rules, payload.toolCall);
   if (verdict.decision === 'deny') {
     try {

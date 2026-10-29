@@ -29,7 +29,7 @@ export function scrubEnv(env) {
 }
 
 /** Writes settings.json, hooks.json and the guard files into <dir>/.gemini. Safe to call before every session. */
-export function buildSessionHome({ dir, permissions, manifestDeny = [], libDir, readOnly = false, realHome = os.homedir() }) {
+export function buildSessionHome({ dir, permissions, manifestDeny = [], libDir, readOnly = false, scope = null, realHome = os.homedir() }) {
   const cli = path.join(dir, '.gemini', 'antigravity-cli');
   const cfg = path.join(dir, '.gemini', 'config');
   fs.mkdirSync(cli, { recursive: true });
@@ -42,7 +42,7 @@ export function buildSessionHome({ dir, permissions, manifestDeny = [], libDir, 
   const deny = [...(permissions.settings_deny || []), ...(readOnly ? ['write_file(*)', 'command(*)'] : [])];
   writeJsonAtomic(path.join(cli, 'settings.json'), { permissions: { allow: readOnly ? [] : permissions.allow, deny } });
   for (const f of GUARD_FILES) fs.copyFileSync(path.join(libDir, f), path.join(cfg, f));
-  writeJsonAtomic(path.join(cfg, 'guard-rules.json'), { permissions, manifestDeny, readOnly });
+  writeJsonAtomic(path.join(cfg, 'guard-rules.json'), { permissions, manifestDeny, readOnly, scope });
   // agy runs "node guard.mjs" from the folder that holds hooks.json, so there is no path (and no quoting problem) in the command.
   writeJsonAtomic(path.join(cfg, 'hooks.json'), {
     'plan-runner-guard': { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'node guard.mjs', timeout: 30 }] }] },
@@ -96,6 +96,12 @@ export function selfTestGuard(cfgDir, { readOnly = false } = {}) {
   if (denied !== 'deny') return `the guard did not refuse "git commit" (answer: ${denied})`;
   if (allowed !== 'ask') return `the guard refused a normal command (answer: ${allowed})`;
   if (secret !== 'deny') return `the guard did not refuse writing a .env file (answer: ${secret})`;
+  let rules = {};
+  try { rules = JSON.parse(fs.readFileSync(path.join(cfgDir, 'guard-rules.json'), 'utf8')); } catch { /* checked below */ }
+  if (rules.scope) { // a write outside the project (here: next to the drive root) must be refused
+    const outside = ask('write_to_file', { TargetFile: path.join(path.parse(cfgDir).root, 'plan-runner-guard-selftest', 'x.txt') });
+    if (outside !== 'deny') return `the guard did not refuse a file write outside the project (answer: ${outside})`;
+  }
   return null;
 }
 

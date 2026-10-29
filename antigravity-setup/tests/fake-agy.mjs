@@ -40,10 +40,16 @@ let idx = 0;
 emit({ event: 'init', conversation_id: cid, init: { model: 'fake', cwd: process.cwd(), tools: ['view_file', 'write_to_file', 'run_command'], permission_mode: 'request-review' } });
 emit({ event: 'step_update', step_update: { conversation_id: cid, step_index: 0, state: 'DONE', step_type: 'user_input' } });
 
-const result = (response = 'done', extra = {}) => emit({ event: 'result', result: { conversation_id: cid, status: 'SUCCESS', response, duration_seconds: 1, num_turns: 1, ...extra } });
+let S = null;
+/** The fixed-format report: every step of this session done, unless `over` says otherwise. */
+const report = (over = {}) => ({
+  steps: Array.from({ length: Math.max(0, S.steps.length - S.resumeFrom + 1) }, (_, i) => ({ n: S.resumeFrom + i, done: true, reason: '' })),
+  not_done: [], different_from_plan: [], needs_person_check: [], summary: `fake summary for plan ${planId}`, ...over,
+});
+const result = (response = 'done', extra = {}, rep = S ? report() : null) => emit({ event: 'result', result: { conversation_id: cid, status: 'SUCCESS', response, duration_seconds: 1, num_turns: 1, ...(rep ? { structured_output: rep } : {}), ...extra } });
 
 if (!planId) { // the final review session
-  result('no findings');
+  result('no findings', {}, null);
   process.exit(0);
 }
 
@@ -52,8 +58,9 @@ const cnt = `${process.env.FAKE_CFG}.cnt.${planId}`;
 const n = (fs.existsSync(cnt) ? Number(fs.readFileSync(cnt, 'utf8')) : 0) + 1;
 fs.writeFileSync(cnt, String(n));
 const mode = plan.modes[Math.min(n, plan.modes.length) - 1];
+fs.appendFileSync(`${process.env.FAKE_CFG}.prompts.log`, `=== plan ${planId} session ${n} mode ${mode}\n${prompt}\n`);
 
-const S = process.env.PLAN_RUNNER_SESSION ? JSON.parse(fs.readFileSync(process.env.PLAN_RUNNER_SESSION, 'utf8')) : null;
+S = process.env.PLAN_RUNNER_SESSION ? JSON.parse(fs.readFileSync(process.env.PLAN_RUNNER_SESSION, 'utf8')) : null;
 const cp = (/node "([^"]+checkpoint\.mjs)"/.exec(prompt) || [])[1];
 const planDir = (/write BLOCKED\.md in (\S+) with/.exec(prompt) || [])[1];
 console.error(`fake agy: plan ${planId} session ${n} mode ${mode}`);
@@ -70,7 +77,7 @@ function say(text) {
 }
 function writeRel(rel, content) {
   const [repo, ...rest] = rel.split('/');
-  const abs = path.join(S.repos[repo], ...rest);
+  const abs = repo in S.repos ? path.join(S.repos[repo], ...rest) : path.join(path.dirname(S.repos[Object.keys(S.repos)[0]]), repo, ...rest);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, content);
   toolStep('write_to_file', { TargetFile: abs }, 'created');
@@ -100,9 +107,27 @@ switch (mode) {
   }
   case 'lie': say('I did everything, trust me.'); result('done'); break;
   case 'question': say('Which database should I use?'); result('Which database should I use?'); break;
-  case 'scope': writeRel('toyapp/OUTSIDE.txt', 'not allowed'); result('done'); break;
+  case 'scope': await doAll(); writeRel('toyapp/.claude/settings.json', '{"permissions":{"allow":["Bash"]}}'); result('done'); break;
+  case 'outside': await doAll(); writeRel('toyapp/notes/extra.txt', 'x'); writeRel('toyapp/.agents/rules/new-rule.md', '# rule'); result('done'); break;
   case 'secret': writeRel('toyapp/.env', 'DB_NAME=hacked\n'); result('done'); break;
-  case 'agentdir': writeRel('toyapp/.agents/hooks.json', '{}'); result('done'); break;
+  case 'agentdir': await doAll(); writeRel('toyapp/.agents/hooks.json', '{}'); result('done'); break;
+  // --- skip-related misbehaviour ---
+  case 'partial': // does one step, then stops, honestly marking the steps it did not reach as not done
+    await doStep(S.resumeFrom);
+    result('Out of time.', {}, report({ steps: report().steps.map((s) => (s.n > S.resumeFrom ? { ...s, done: false, reason: 'not reached' } : s)) }));
+    break;
+  case 'partial_silent': await doStep(S.resumeFrom); result('All done.', {}, null); break;
+  case 'partial_notdone':
+    await doStep(S.resumeFrom);
+    result('Stopped.', {}, report({ steps: report().steps.map((s) => ({ ...s, done: false, reason: s.n === S.resumeFrom ? 'half of it is missing' : 'not reached' })) }));
+    break;
+  case 'notdone_last': await doAll(); result('done', {}, report({ not_done: [{ step: S.steps.length, item: 'the second half of the last step', reason: 'a command was refused' }] })); break;
+  case 'notdone_first': await doAll(); result('done', {}, report({ steps: report().steps.map((s) => (s.n === 1 ? { ...s, done: false, reason: 'could not write the test' } : s)) })); break;
+  case 'noreport': await doAll(); result('All steps done, everything works.', {}, null); break;
+  case 'textreport': await doAll(); result(`Done.\n\n\`\`\`json\n${JSON.stringify(report())}\n\`\`\``, {}, null); break;
+  case 'deviation': await doAll(); result('done', {}, report({ different_from_plan: [{ step: 1, what: 'used unset() instead of imagedestroy()', reason: 'imagedestroy is deprecated' }], needs_person_check: ['open the page in a browser'] })); break;
+  case 'deviation_noreason': await doAll(); result('done', {}, report({ different_from_plan: [{ step: 1, what: 'skipped the cache', reason: '' }] })); break;
+  case 'otherrepo': await doAll(); writeRel('otherrepo/touched.txt', 'x'); result('done'); break;
   case 'lockfile': await doAll(); writeRel('toyapp/Cargo.lock', 'lock'); writeRel('toyapp/go.sum', 'sum'); result('done'); break;
   case 'hang': sleepForever(); break;
   case 'crash': process.exit(1); break;

@@ -49,6 +49,7 @@ function build(name, opts = {}) {
   const api = path.join(ws, 'toyapi');
   mkRepo(app, { '.env': 'DB_NAME=real_db\n' });
   mkRepo(api);
+  if (opts.otherRepo) mkRepo(path.join(ws, 'otherrepo'));
   const dir = path.join(app, 'docs', 'plans', 'feat');
   fs.mkdirSync(path.join(dir, '_planning'), { recursive: true });
   fs.writeFileSync(path.join(dir, '_planning', 'STATE.md'), 'phase: plans-approved\n');
@@ -154,11 +155,11 @@ await t('02 lying session (says done, did nothing): halts, later plans never sta
   c(s.plans['001'].attempts === 3, `attempts ${s.plans['001'].attempts}`);
 });
 
-await t('03 out-of-scope edit: caught, rolled back, saved as patch', async (c) => {
+await t('03 blocked file (.claude/settings.json) edited: caught, rolled back, saved as patch', async (c) => {
   const w = build('scope', { cfg: { '001': { modes: ['scope'] } } });
   const r = await runRunner(w);
   c(r.code === 1, `exit ${r.code}`);
-  c(!has(path.join(w.app, 'OUTSIDE.txt')), 'stray file was not rolled back');
+  c(!has(path.join(w.app, '.claude', 'settings.json')), 'blocked file was not rolled back');
   c(fs.readdirSync(path.join(w.runDir, 'plans', '001')).some((f) => f.endsWith('.patch')), 'no patch file saved');
   c(r.out.includes('SCOPE GATE'), 'scope gate did not report');
 });
@@ -210,11 +211,12 @@ await t('09 turn overrun: stopped at green checkpoint, continued fresh', async (
   c(has(path.join(w.app, 'src', 'a2.js')), 'step 2 never ran');
 });
 
-await t('10 crash after step 1: resumes at step 2, progress not counted as an attempt', async (c) => {
+await t('10 crash after step 1: resumes at step 2; the crash counts as a try of step 2, not of step 1', async (c) => {
   const w = build('progress', { twoSteps: true, cfg: { '001': { modes: ['crash_after_step1', 'ok'] } } });
   const r = await runRunner(w);
   c(r.code === 0, `exit ${r.code}\n${r.out.slice(-900)}`);
-  c(state(w).plans['001'].attempts === 0, `attempts ${state(w).plans['001'].attempts}`);
+  c(state(w).plans['001'].attempts === 1, `attempts ${state(w).plans['001'].attempts}`);
+  c(/step 2: try 1 of 3 failed/.test(r.out), 'the failed try was not charged to step 2');
   c(/resuming after step 1/.test(r.out), 'second session did not resume after step 1');
 });
 
@@ -353,11 +355,12 @@ await t('25 a refused tool call is not fatal: agy still says SUCCESS, the gates 
   c(state(w).plans['001'].status === 'done', 'plan 001 should pass: the work was done');
 });
 
-await t('26 a program run by the session moves HEAD (bypasses the deny rules): halts, files rolled back', async (c) => {
+await t('26 a program run by the session moves HEAD (bypasses the deny rules): halts, rolled back to the last checkpoint', async (c) => {
   const w = build('headmove', { cfg: { '001': { modes: ['headmove'] } } });
   const r = await runRunner(w);
-  c(r.code === 1 && /changed git state/.test(r.out) && /HEAD moved/.test(r.out), `exit ${r.code}\n${r.out.slice(-700)}`);
-  c(!has(path.join(w.app, 'src', 'a.js')), 'the files were not rolled back');
+  c(r.code === 1 && /changed git state/.test(r.out) && /HEAD moved/.test(r.out) && /rolled back to the last checkpoint/.test(r.out), `exit ${r.code}\n${r.out.slice(-700)}`);
+  // every step was checkpointed before the commit, so that work is kept: the rollback goes to the last checkpoint, not the plan start
+  c(has(path.join(w.app, 'src', 'a.js')) && state(w).plans['001'].status === 'failed', 'the checkpointed work should be kept and the plan marked failed');
   c(!state(w).plans['002'], 'a later plan started');
 });
 
@@ -393,7 +396,7 @@ await t('30 editing .agents/ (the agent configuration) is a scope violation', as
 await t('31 unknown model: refuses to start and lists what agy offers', async (c) => {
   const w = build('badmodel');
   const r = await runRunner(w, [], { FAKE_MODELS: JSON.stringify(['some-other-model']) });
-  c(r.code === 2 && /The model "gemini-[\w.-]+" is not available in agy/.test(r.out) && r.out.includes('some-other-model'), `exit ${r.code}\n${r.out.slice(-500)}`);
+  c(r.code === 2 && /The model "[\w.-]+" is not available in agy/.test(r.out) && r.out.includes('some-other-model'), `exit ${r.code}\n${r.out.slice(-500)}`);
   c(!has(`${w.cfg}.args.log`), 'a session was started');
 });
 
@@ -466,6 +469,154 @@ await t('39 validate.mjs run on its own (how /plan-split runs it) finds the repo
   const w = build('standalone');
   const r = spawnSync('node', [path.join(RUNNER, 'validate.mjs'), w.dir], { encoding: 'utf8' });
   c(r.status === 0 && /VALID/.test(r.stdout) && !/INVALID/.test(r.stdout), `exit ${r.status}\n${r.stdout}`);
+});
+
+// ---------- no step may be skipped (same cases as the Claude runner's tests) ----------
+const cpsOf = (w, id = '001') => { try { return Object.keys(JSON.parse(fs.readFileSync(path.join(w.runDir, 'plans', id, 'checkpoints.json'), 'utf8'))).map(Number).sort(); } catch { return []; } };
+const reportOf = (w) => fs.readFileSync(path.join(w.runDir, 'REPORT.md'), 'utf8');
+const failuresOf = (w, id = '001') => { try { return fs.readFileSync(path.join(w.runDir, 'plans', id, 'failures.log'), 'utf8'); } catch { return ''; } };
+const setModes = (w, id, modes) => { const cfg = JSON.parse(fs.readFileSync(w.cfg, 'utf8')); cfg[id].modes = modes; fs.writeFileSync(w.cfg, JSON.stringify(cfg)); };
+const BAD = 'exports.add=()=>0;';
+function onePlan(n, over = {}) {
+  const names = ['a', 'a2', 'a3'].slice(0, n);
+  return [{ id: '001', file: '001-a.md', repos: ['toyapp'], depends_on: [], allowed_paths: names.map((x) => `toyapp/src/${x}.js`), verify: names.map((x) => `node check.js ${x}`), est_turns: 10,
+    steps: names.map((x, i) => ({ n: i + 1, title: x, verify: [`node check.js ${x}`] })), ...over }];
+}
+const filesFor = (n) => ['a', 'a2', 'a3'].slice(0, n).map((x) => [`toyapp/src/${x}.js`, GOOD]);
+
+await t('S01 session does one step and stops: a fresh session continues, every step gets done, no try used', async (c) => {
+  const w = build('s01', { plans: onePlan(3), cfg: { '001': { modes: ['partial'], files: filesFor(3) } } });
+  const r = await runRunner(w);
+  const p = state(w).plans['001'];
+  c(r.code === 0 && p.status === 'done' && p.attempts === 0 && p.sessions === 3, `exit ${r.code} status ${p.status} attempts ${p.attempts} sessions ${p.sessions}\n${r.out.slice(-600)}`);
+  c(['a', 'a2', 'a3'].every((x) => has(path.join(w.app, 'src', `${x}.js`))), 'a step was skipped');
+  const w2 = build('s01b', { plans: onePlan(3), cfg: { '001': { modes: ['partial_silent', 'partial_silent', 'partial_silent', 'ok'], files: filesFor(3) } } });
+  const r2 = await runRunner(w2);
+  c(r2.code === 0 && state(w2).plans['001'].attempts === 1, `silent: exit ${r2.code} attempts ${state(w2).plans['001']?.attempts}`);
+});
+
+await t('S03 if_changed in a step check is refused by the validator', async (c) => {
+  const w = build('s03', { plans: onePlan(2, { steps: [{ n: 1, title: 'a', verify: ['node check.js a'] }, { n: 2, title: 'a2', verify: [{ cmd: 'node check.js a2', if_changed: ['toyapp/src/a2.js'] }] }] }) });
+  const r = await runRunner(w);
+  c(r.code === 2 && /if_changed/.test(r.out), `exit ${r.code}\n${r.out.slice(-600)}`);
+});
+
+await t('S04 a later step breaks an earlier step: the re-check at the end catches it', async (c) => {
+  const w = build('s04', { plans: onePlan(3), cfg: { '001': { modes: ['ok'], files: [['toyapp/src/a.js', GOOD], ['toyapp/src/a2.js', GOOD], ['toyapp/src/a.js', BAD]] } } });
+  const man = JSON.parse(fs.readFileSync(path.join(w.dir, 'manifest.json'), 'utf8')); man.plans[0].steps[2].verify = ['node check.js a2']; man.plans[0].verify = ['node check.js a2']; fs.writeFileSync(path.join(w.dir, 'manifest.json'), JSON.stringify(man));
+  const r = await runRunner(w);
+  c(r.code === 1 && state(w).plans['001'].status === 'failed' && /step 1 re-check failed/.test(failuresOf(w)), `exit ${r.code}\n${failuresOf(w).slice(0, 400)}`);
+});
+
+await t('S05 a step gets 3 tries; every reason is stored; a new start keeps the passed steps and goes on', async (c) => {
+  const w = build('s05', { plans: onePlan(2), cfg: { '001': { modes: ['crash_after_step1', 'crash', 'crash'], files: filesFor(2) } } });
+  const r = await runRunner(w);
+  const p = state(w).plans['001'];
+  c(r.code === 1 && p.status === 'failed' && p.attempts === 3 && JSON.stringify(cpsOf(w)) === '[1]', `exit ${r.code} status ${p.status} attempts ${p.attempts} cps ${JSON.stringify(cpsOf(w))}`);
+  c(['try 1 of 3', 'try 2 of 3', 'try 3 of 3'].every((x) => failuresOf(w).includes(`step 2, ${x}`)), 'failures.log incomplete');
+  setModes(w, '001', ['ok']);
+  const r2 = await runRunner(w);
+  c(r2.code === 0 && /Re-checking the 1 kept step/.test(r2.out) && has(path.join(w.app, 'src', 'a2.js')), `second run exit ${r2.code}\n${r2.out.slice(-700)}`);
+});
+
+await t('S06 "not done" on the last step: halts, keeps the steps before it; a new start finishes it', async (c) => {
+  const w = build('s06', { plans: onePlan(2), cfg: { '001': { modes: ['notdone_last'], files: filesFor(2) } } });
+  const r = await runRunner(w);
+  c(r.code === 1 && state(w).plans['001'].status === 'notdone' && JSON.stringify(cpsOf(w)) === '[1]', `exit ${r.code} cps ${JSON.stringify(cpsOf(w))}`);
+  c(has(path.join(w.app, 'src', 'a.js')) && !has(path.join(w.app, 'src', 'a2.js')) && /the second half of the last step/.test(reportOf(w)), 'wrong rollback point or report');
+  setModes(w, '001', ['ok']);
+  const r2 = await runRunner(w);
+  c(r2.code === 0 && has(path.join(w.app, 'src', 'a2.js')), `second run exit ${r2.code}`);
+});
+
+await t('S07 "not done" on step 1 / on a checkpointed step after moving forward: goes back to before it and halts', async (c) => {
+  const w = build('s07', { plans: onePlan(2), cfg: { '001': { modes: ['notdone_first'], files: filesFor(2) } } });
+  const r = await runRunner(w);
+  c(r.code === 1 && state(w).plans['001'].status === 'notdone' && cpsOf(w).length === 0, `exit ${r.code}`);
+  const w2 = build('s07b', { plans: onePlan(3), cfg: { '001': { modes: ['partial_notdone'], files: filesFor(3) } } });
+  const r2 = await runRunner(w2);
+  c(r2.code === 1 && state(w2).plans['001'].status === 'notdone' && /half of it is missing/.test(r2.out), `exit ${r2.code}`);
+});
+
+await t('S08 no final report: a failed try; a report in a json block is accepted', async (c) => {
+  const w = build('s08', { plans: onePlan(1), cfg: { '001': { modes: ['noreport', 'ok'], files: filesFor(1) } } });
+  const r = await runRunner(w);
+  c(r.code === 0 && state(w).plans['001'].attempts === 1 && /final report is missing or not valid/.test(failuresOf(w)), `exit ${r.code}`);
+  const w2 = build('s09', { plans: onePlan(1), cfg: { '001': { modes: ['textreport'], files: filesFor(1) } } });
+  const r2 = await runRunner(w2);
+  c(r2.code === 0 && state(w2).plans['001'].attempts === 0, `textreport exit ${r2.code}`);
+});
+
+await t('S10 "done differently" with a reason is in section 1; without a reason it is a failed try', async (c) => {
+  const w = build('s10', { plans: onePlan(1), cfg: { '001': { modes: ['deviation'], files: filesFor(1) } } });
+  const r = await runRunner(w);
+  const rep = reportOf(w);
+  const s1 = rep.indexOf('## 1. Read this: done differently from the plan');
+  c(r.code === 0 && s1 > 0 && rep.indexOf('imagedestroy') > s1 && rep.indexOf('imagedestroy') < rep.indexOf('## 2.'), 'deviation not in section 1');
+  const w2 = build('s10b', { plans: onePlan(1), cfg: { '001': { modes: ['deviation_noreason', 'ok'], files: filesFor(1) } } });
+  const r2 = await runRunner(w2);
+  c(r2.code === 0 && state(w2).plans['001'].attempts === 1, `exit ${r2.code}`);
+});
+
+await t('S11 files outside allowed_paths (also .agents/rules) are allowed and listed in the report', async (c) => {
+  const w = build('s11', { plans: onePlan(1), cfg: { '001': { modes: ['outside'], files: filesFor(1) } } });
+  const r = await runRunner(w);
+  const rep = reportOf(w);
+  const s2 = rep.indexOf("## 2. Changed outside the plan's allowed_paths");
+  c(r.code === 0 && s2 > 0 && rep.indexOf('toyapp/notes/extra.txt', s2) > 0 && rep.indexOf('toyapp/.agents/rules/new-rule.md', s2) > 0, `exit ${r.code}\n${r.out.slice(-500)}`);
+});
+
+await t('S13 a finished plan changed afterwards: refuses to resume', async (c) => {
+  const w = build('s13', { cfg: { '002': { modes: ['lie'] } } });
+  await runRunner(w);
+  fs.appendFileSync(path.join(w.dir, '001-a.md'), '\nOne more thing.\n');
+  const r = await runRunner(w);
+  c(r.code === 2 && /was changed after it finished/.test(r.out), `exit ${r.code}\n${r.out.slice(-400)}`);
+});
+
+await t('S14 the steps of a stopped plan changed: it starts over', async (c) => {
+  const w = build('s14', { plans: onePlan(2), cfg: { '001': { modes: ['notdone_last'], files: filesFor(2) } } });
+  await runRunner(w);
+  const man = JSON.parse(fs.readFileSync(path.join(w.dir, 'manifest.json'), 'utf8')); man.plans[0].steps[0].title = 'a, renamed'; fs.writeFileSync(path.join(w.dir, 'manifest.json'), JSON.stringify(man));
+  setModes(w, '001', ['ok']);
+  const r = await runRunner(w);
+  c(r.code === 0 && /starts over/.test(r.out), `exit ${r.code}\n${r.out.slice(-600)}`);
+});
+
+await t('S15 a step check that passes before any work is reported as weak', async (c) => {
+  const w = build('s15', { plans: onePlan(2, { steps: [{ n: 1, title: 'a', verify: ['node -e "process.exit(0)"'] }, { n: 2, title: 'a2', verify: ['node check.js a2'] }] }), cfg: { '001': { modes: ['ok'], files: filesFor(2) } } });
+  const r = await runRunner(w);
+  c(r.code === 0 && /## Weak checks[\s\S]*Plan 001: step\(s\) 1\b/.test(reportOf(w)), `exit ${r.code}`);
+});
+
+await t('S16 a session changes another repo next to the project: halts', async (c) => {
+  const w = build('s16', { otherRepo: true, plans: onePlan(1), cfg: { '001': { modes: ['otherrepo'], files: filesFor(1) } } });
+  const r = await runRunner(w);
+  c(r.code === 1 && /another repo outside the project/.test(r.out), `exit ${r.code}\n${r.out.slice(-600)}`);
+});
+
+await t('S20 validator: a step without a check, an unknown plan-file step, and a check on a file nobody creates are errors', async (c) => {
+  const w = build('s20', { plans: onePlan(2, { steps: [{ n: 1, title: 'a' }, { n: 2, title: 'a2', verify: [`node "{{runner}}/assert.mjs" has src/never.js "x"`] }] }) });
+  fs.appendFileSync(path.join(w.dir, '001-a.md'), '\n### Step 3: extra\nDo more.\n');
+  const text = validateFolder(w.dir, { workspace: w.ws }).errors.join('\n');
+  c(/step 1: verify must be a non-empty array/.test(text) && /plan file has "Step 3"/.test(text) && /toyapp\/src\/never\.js/.test(text), text);
+});
+
+await t('S22 all steps done but the final check fails: the retry prompt says so', async (c) => {
+  const w = build('s22', { plans: onePlan(1, { verify: ['node check.js z'] }), cfg: { '001': { modes: ['ok'], files: filesFor(1) } } });
+  const r = await runRunner(w);
+  const prompts = fs.readFileSync(`${w.cfg}.prompts.log`, 'utf8');
+  c(r.code === 1 && /the final check failed 3 times/.test(r.out) && /ALL 1 steps are ALREADY DONE/.test(prompts) && !/Start at step 2/.test(prompts), `exit ${r.code}`);
+});
+
+await t('S23 the session gets the report schema (--json-schema) and the guard knows the project scope', async (c) => {
+  const w = build('s23', { plans: onePlan(1), cfg: { '001': { modes: ['ok'], files: filesFor(1) } } });
+  await runRunner(w);
+  const a = argLog(w).filter((x) => x.argv.includes('-p'))[0];
+  const i = a.argv.indexOf('--json-schema');
+  c(i > 0 && JSON.parse(fs.readFileSync(a.argv[i + 1], 'utf8')).required.includes('not_done'), 'no report schema');
+  const rules = JSON.parse(fs.readFileSync(path.join(w.runDir, 'agy-home', '.gemini', 'config', 'guard-rules.json'), 'utf8'));
+  c(rules.scope && rules.scope.roots.length === 1 && /docs[\\/]plans[\\/]feat$/.test(rules.scope.planDir), JSON.stringify(rules.scope));
 });
 
 const LIMIT = Number(process.env.CHAOS_PAR || 5);

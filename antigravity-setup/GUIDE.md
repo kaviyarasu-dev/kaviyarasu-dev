@@ -56,7 +56,7 @@ Stop with Ctrl+C. The runner rolls the current plan back to its last good step t
 
 ## 4. When it stops
 
-Read `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md` (a copy is also in the plan folder). It says why it stopped, which files changed, which commands the guard refused, new dependencies, the things only a person can check, and a security review of the whole diff. Fix the cause and run the same command again: it resumes at the plan that stopped. Work thrown away by a rollback is saved as `.patch` files in the run folder.
+Read `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md` (a copy is also in the plan folder). It starts with what to read first: what was done differently from the plan, files changed outside the plan, and the things only a person can check. Then why it stopped, anything not done, weak checks, every failed try (full reasons in `plans/<id>/failures.log`), which commands the guard refused, which files changed, new dependencies, the session reports and a security review of the whole diff. Fix the cause in the plan file or the environment (not the code by hand) and run the same command again: it keeps the steps that passed, re-checks them and goes on. Work thrown away by a rollback is saved as `.patch` files in the run folder.
 
 The runner never commits. When it finishes, review the diff in each repo and commit it yourself.
 
@@ -69,7 +69,7 @@ The runner never commits. When it finishes, review the diff in each repo and com
 | `REFUSED TO START: The model "..." is not available` | a model name in `config/models.json` or the manifest is not in `agy models` | fix the name |
 | `agy could not start in its isolated HOME` | agy could not sign in or start there (seen as a risk on macOS and Linux) | run `agy` once normally, or use `--no-isolation` |
 | `This manifest is in the OLD Antigravity format` | the plan folder was made by the first Antigravity setup | run `/plan-split <slug>` again |
-| `Usage limit reached. Waiting ...` | quota or credits ran out | leave it: it waits and retries without using an attempt |
+| `Usage limit reached. Waiting ...` | quota or credits ran out | leave it: it waits and retries without using a try |
 | the session is "BLOCKED" | it needed something it was not allowed to do, or the plan is unclear | read the reason in the report, fix the plan or the rule, run again |
 
 ## 6. Differences from the Claude Code runner

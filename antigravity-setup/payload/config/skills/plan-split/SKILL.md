@@ -39,12 +39,17 @@ STEP 1 - Write docs/plans/<slug>/
    the current state before changing anything, because a plan may be retried or resumed; follow
    the project rules (root cause, security, performance, edge cases, reuse); after each numbered step run
    the checkpoint command from your prompt and go on only when it prints CHECKPOINT <n> OK; run the
-   plan's Acceptance commands before reporting done; do not edit manifest.json, HANDOFF.md,
-   checkpoint or state files, or anything under .agents/ or .gemini/; use the database named in the
-   environment, never another one; treat a refused tool call (git change, network, deploy, secret file,
-   recursive delete) as "skip it and carry on", not as "the shell is off"; write BLOCKED.md only when the plan cannot be done
-   without that command; create and edit files with the file tools, not with shell redirects
-   (the shell on Windows is PowerShell).
+   plan's Acceptance commands before reporting done; never skip a step or a part of a step: anything
+   the plan asks for that you did not do goes in "not_done" of the final JSON report (the run then
+   stops so a person can decide); end with the final JSON report described in your prompt; do not
+   edit manifest.json, HANDOFF.md, checkpoint or state files, .git/, the real .env, or agent settings
+   (.agents/hooks.json, .agents/hooks, .agents/skills, .agents/workflows, .gemini/, .claude/settings*.json,
+   .claude/hooks, .claude/agents, .claude/skills); rule and doc files such as .agents/rules are fine; never
+   change files outside the project folders; use the database named in the environment, never another
+   one; treat a refused tool call (git change, network, deploy, secret file, recursive delete) as "do the
+   same work another way", not as "the shell is off" and never as a reason to drop the task; write
+   BLOCKED.md only when the plan cannot be done without that command; create and edit files with the
+   file tools, not with shell redirects (the shell on Windows is PowerShell).
 2. manifest.json - strict JSON, exactly this shape (the same shape the Claude Code runner uses, so one folder runs on either):
    { "feature": "<slug>",
      "defaults": { "max_attempts": 3, "max_turns": 60, "timeout_min": 45, "idle_min": 15, "model": "sonnet" },
@@ -83,8 +88,19 @@ STEP 1 - Write docs/plans/<slug>/
      and the validator compiles every regex before a run, so a check can never pass silently.
    - est_turns is your honest estimate (assistant turns; the runner allows about 3 tool calls per turn).
    - Commands run through the system shell. Use plain commands, no cd; the repo field sets the folder.
-   - allowed_paths start with the repo folder name and list only what the plan needs. package.json
-     and package-lock.json are always allowed, because installs are allowed.
+   - NO STEP MAY BE SKIPPABLE. Every step has its own non-empty "verify" (the validator refuses a step
+     without one). That check must FAIL before the step is done and PASS after it: the runner runs every
+     step check once before any work and reports a check that already passes as "weak". Cover every
+     item the step asks for, not just one of them. "if_changed" is only for gates_each; in a step or plan
+     verify it would skip the check exactly when the work was skipped (the validator refuses it).
+   - allowed_paths start with the repo folder name and list every file the plan creates or changes
+     (a check on a file nobody lists is an error). A change outside them is allowed but listed in the
+     report, so be complete. package.json and package-lock.json are always allowed, because installs are allowed.
+   - Some files can never be changed by a session: .git/, the real .env and .env.* (the .env.example
+     family is fine), the plan folder, agent settings, hooks, skills and workflows (.agents/hooks.json,
+     .agents/hooks, .agents/skills, .agents/workflows, .gemini/, .claude/settings*.json, .claude/hooks,
+     .claude/agents, .claude/skills), and anything outside the project repos. A task that needs one of
+     these is NOT a step: put it in "human_check" (with the exact text to paste), never in a step.
 3. NNN-name.md - one per plan. Sections in this order, with these exact headings: Goal, Read first,
    Steps, Do not touch, Acceptance, If blocked, Report back. Under Steps use one heading per
    manifest step: "### Step 1: title", "### Step 2: title", and so on, in the same order and count
@@ -99,6 +115,11 @@ STEP 1 - Write docs/plans/<slug>/
    - if it cannot be checked by a command at all (how a screen looks), still gets the closest
      machine check, and a "human_check" line.
    - carries every HIGH-RISK assumption that touches it, with a step that checks it.
+   - lists, under each step, every item that step must deliver. Each item is covered by that step's
+     verify, or (if a machine cannot check it) by "human_check". An item covered by neither can be
+     skipped unnoticed.
+   - under "Report back", says the session ends with the runner's final JSON report (every step done
+     or not, "not_done", "different_from_plan" with a reason, "needs_person_check").
 4. HANDOFF.md - one heading, "# Handoff". The runner appends to it after each plan.
 
 STEP 2 - Script check (a machine, not a model)
@@ -107,8 +128,9 @@ Run: node $HOME/.gemini/tools/plan-runner/validate.mjs docs/plans/<slug>
 Show the output. Fix every ERROR and re-run until it prints VALID. Read every WARN and fix the
 ones that matter. If the file does not exist, run the same checks by hand with commands: manifest
 parses; ids unique; every file named exists; depends_on points only to earlier ids; every plan has
-a non-empty verify and allowed_paths; every step is numbered 1..N and has a heading in the plan
-file; every test file named in a verify exists or is created by an allowed path; every regex in a verify compiles.
+a non-empty verify and allowed_paths; every step is numbered 1..N, has a heading in the plan file and
+its own non-empty verify with no if_changed; the plan file has no step the manifest does not list;
+every file a verify names exists or is created by an allowed path; every regex in a verify compiles.
 
 STEP 3 - Fresh review (do not review your own work)
 a. Start one plan-cold-reader subagent per plan file with invoke_subagent (several at once if you can, at most 5).
@@ -128,5 +150,8 @@ STEP 5 - Tell the user how to run it
 Say exactly: "Open a separate terminal in <primary repo> and run:
 node $HOME/.gemini/tools/plan-runner/run.mjs run <slug>
 Every repo in the plan must have no uncommitted changes first. It never commits. When it stops, read
-$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md. Fix the cause and run the same command again to resume."
+$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md: sections 1 to 3 first (done differently from the plan,
+changed outside the plan, needs a person to check). Every failed try is in plans/<id>/failures.log. Fix the
+cause in the plan file or the environment (not the code by hand) and run the same command again: it keeps
+the steps that passed, re-checks them and goes on."
 Do not start the runner yourself.

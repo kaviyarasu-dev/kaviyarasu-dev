@@ -41,7 +41,9 @@ export const TEXT_RULES = [
   [/(?:^|[\s"'/\\=])id_(?:rsa|ed25519|ecdsa|dsa)\b/i, 'private keys are off limits'],
   // the repository metadata and the agent's own configuration
   [new RegExp(`${SEP_BEFORE}\\.git[\\\\/]`, 'i'), '.git is managed by the runner'],
-  [new RegExp(`${SEP_BEFORE}\\.(?:agents?|claude)(?:[\\\\/]|${END_AFTER})`, 'i'), 'the agent configuration is managed by the runner'],
+  // agent settings, hooks, sub-agents and skills change how the NEXT session behaves; rule and doc files (.claude/rules, .agents/rules) are open
+  [new RegExp(`${SEP_BEFORE}\\.claude[\\\\/](?:settings[\\w.-]*\\.json|hooks|agents|skills|commands)(?:[\\\\/]|${END_AFTER})`, 'i'), 'the agent configuration is managed by the runner'],
+  [new RegExp(`${SEP_BEFORE}\\.agents?[\\\\/](?:hooks\\.json|hooks|skills|workflows)(?:[\\\\/]|${END_AFTER})`, 'i'), 'the agent configuration is managed by the runner'],
   [new RegExp(`${SEP_BEFORE}\\.gemini[\\\\/](?:config|antigravity[\\w-]*)(?:[\\\\/]|${END_AFTER})`, 'i'), 'the agent configuration is managed by the runner'],
   [/agy-home|plan-runs/i, 'the runner\'s own state is off limits'],
   // recursive deletes
@@ -65,7 +67,7 @@ export const TEXT_RULES = [
  * A manifest's own permissions.deny entries use the same spelling as the Claude runner: "Bash(docker *)" adds a
  * command rule, "Read(glob)" a protected path, "Edit(glob)" or "Write(glob)" a write-protected path.
  */
-export function compileRules(cfg = {}, manifestDeny = [], { readOnly = false } = {}) {
+export function compileRules(cfg = {}, manifestDeny = [], { readOnly = false, scope = null } = {}) {
   const cmds = [...(cfg.deny_commands || [])];
   const denyPaths = [...(cfg.deny_paths || [])];
   const denyWritePaths = [...(cfg.deny_write_paths || [])];
@@ -86,7 +88,25 @@ export function compileRules(cfg = {}, manifestDeny = [], { readOnly = false } =
     allowPaths: lower(cfg.allow_paths || []),
     unsupported,
     readOnly, // the final review: no shell and no file edits at all
+    // file writes must stay inside the project repos (plus the temp folder and the session's own HOME), and out of the plan folder
+    scope: scope ? {
+      roots: (scope.roots || []).map(normDir),
+      allowWrite: (scope.allowWrite || []).map(normDir),
+      planDir: scope.planDir ? normDir(scope.planDir) : null,
+    } : null,
   };
+}
+
+const normDir = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+const isAbs = (p) => /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('/') || p.startsWith('\\\\');
+const under = (file, dir) => file === dir || file.startsWith(`${dir}/`);
+
+/** Why a write to this absolute path is refused, or null. */
+function outsideScope(scope, raw) {
+  const f = normDir(raw);
+  if (scope.planDir && under(f, scope.planDir) && f !== `${scope.planDir}/blocked.md`) return `${raw} is in the plan folder (only BLOCKED.md may be written there)`;
+  if (scope.roots.some((r) => under(f, r)) || scope.allowWrite.some((r) => under(f, r))) return null;
+  return `${raw} is outside the project folders; only files inside them may be changed`;
 }
 
 const WRITE_TOOLS = /^(?:write_to_file|replace_file_content|multi_replace_file_content|sed_file|notebook_edit)$/;
@@ -107,7 +127,7 @@ const looksLikePath = (s) => /[\\/]/.test(s) || /^\.[\w-]/.test(s);
 
 const refuse = (reason) => ({
   decision: 'deny',
-  reason: `Refused by the plan runner: ${reason}. This does NOT mean your shell or tools are off. Do not retry it. The runner does that kind of work itself, so skip this command and continue with the rest of the plan. Write BLOCKED.md only if the plan truly cannot be done without it.`,
+  reason: `Refused by the plan runner: ${reason}. This does NOT mean your shell or tools are off. Do not retry the same command: do the same work another way (the runner does all git work itself, so a refused git command needs no replacement). Never drop a task because of this: if the plan truly cannot be done without it, write BLOCKED.md.`,
 });
 
 /** The PreToolUse decision for one tool call: { decision: 'deny', reason } or { decision: 'ask' } (= "use the normal permission rules"). */
@@ -138,6 +158,12 @@ export function decide(rules, toolCall) {
       if (matchesAny(rules.allowPaths, p)) continue;
       if (matchesAny(rules.denyPaths, p)) return refuse(`${shown} is a protected file`);
       if (write && matchesAny(rules.denyWritePaths, p)) return refuse(`${shown} is managed by the runner`);
+    }
+    // only the target path, never the file content (a file can start with "/**")
+    const target = write ? [args.TargetFile, args.AbsolutePath, args.FilePath, args.Path].find((x) => typeof x === 'string' && x) : null;
+    if (target && rules.scope && isAbs(target)) {
+      const why = outsideScope(rules.scope, target);
+      if (why) return refuse(why);
     }
   }
   return { decision: 'ask' };

@@ -38,7 +38,8 @@ function describeTool(b) {
 
 /**
  * opts: { args, prompt, cwd, env, idleMs, timeoutMs, rawLog, label, turnLimit, onCheckpointStop }
- * Returns facts: { exitCode, killedFor, result, turns, rateLimit, denials, stderrTail, sawCheckpointStop }
+ * Returns facts: { exitCode, killedFor, result, turns, rateLimit, denials, refused, stderrTail, sawCheckpointStop }
+ * refused: [{ tool, what }] for every tool call the permission rules refused, with the command or file it named.
  */
 export function runClaude(opts) {
   return new Promise((resolve) => {
@@ -55,9 +56,10 @@ export function runClaude(opts) {
     const raw = opts.rawLog ? fs.createWriteStream(opts.rawLog, { flags: 'a' }) : null;
     const facts = {
       exitCode: null, killedFor: null, result: null, turns: 0, rateLimit: null,
-      denials: [], stderrTail: '', sawCheckpointStop: false, spawnError: null,
+      denials: [], refused: [], stderrTail: '', sawCheckpointStop: false, spawnError: null,
     };
     const seenMsg = new Set();
+    const toolUses = new Map(); // tool_use id -> { name, input }, to name the command a refusal was about
     let last = Date.now();
     let buf = '';
     let done = false;
@@ -101,7 +103,7 @@ export function runClaude(opts) {
           if (id && !seenMsg.has(id)) { seenMsg.add(id); facts.turns++; }
           else if (!id) facts.turns++;
           for (const b of ev.message?.content || []) {
-            if (b.type === 'tool_use') progress(describeTool(b));
+            if (b.type === 'tool_use') { toolUses.set(b.id, b); progress(describeTool(b)); }
             else if (b.type === 'text' && b.text?.trim()) progress(`says: ${b.text.trim().replace(/\s+/g, ' ').slice(0, 140)}`);
           }
           break;
@@ -110,6 +112,11 @@ export function runClaude(opts) {
           for (const b of ev.message?.content || []) {
             if (b.type !== 'tool_result') continue;
             const text = typeof b.content === 'string' ? b.content : JSON.stringify(b.content);
+            if (b.is_error && /has been denied|permission to use .* (?:was|has been) denied|denied by .*hook|refused by the plan runner/i.test(text)) {
+              const u = toolUses.get(b.tool_use_id) || {};
+              const i = u.input || {};
+              facts.refused.push({ tool: u.name || '?', what: String(i.command || i.file_path || i.notebook_path || i.path || '').replace(/\s+/g, ' ').slice(0, 300) });
+            }
             if (/CHECKPOINT \d+ OK/.test(text)) {
               log('System', text.match(/CHECKPOINT \d+ OK[^"\\]*/)[0]);
               if (opts.stopAfterCheckpoint?.(facts.turns)) { // turn budget exceeded: continue in a fresh session
