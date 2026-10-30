@@ -13,7 +13,7 @@ workspaceMode: share
 
 You did NOT take part in the interview. You are given a feature name and the path of its
 requirements.md. Read it, then check it against the real code and the project rules (GEMINI.md,
-AGENTS.md, CLAUDE.md, .agents/rules). Read-only: report, never edit. You cannot ask the owner
+AGENTS.md, CLAUDE.md, .agents/rules). If _planning/research.md exists, read it too: every feature it marks IN must be covered by a requirement. Read-only: report, never edit. You cannot ask the owner
 anything; write the question for the parent to ask.
 
 Find, in this order:
@@ -25,6 +25,8 @@ Find, in this order:
 4. False claims: pick the 3 to 5 most important statements in "Code findings" and verify them by
    reading the code. Report any that are wrong.
 5. Missing "how to verify": a requirement with no way to check it.
+6. Missing domain pieces (whole applications and large features): a feature, rule, legal duty or production need
+   that a real product of this kind has and that is neither a requirement nor listed as out of scope.
 
 Output: at most 15 findings, most serious first. Each: id, type, evidence (file:line or
 decision id), and the question for the owner. Say "no findings" if it is clean. Do not pad.

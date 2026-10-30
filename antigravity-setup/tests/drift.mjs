@@ -11,9 +11,10 @@ const AGY = path.join(HERE, '..', 'payload', 'tools', 'plan-runner');
 const read = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 
 // byte-for-byte copies (line endings aside)
-const IDENTICAL = ['lib/git.mjs', 'lib/util.mjs', 'lib/system.mjs', 'checkpoint.mjs'];
+const IDENTICAL = ['lib/git.mjs', 'lib/util.mjs', 'lib/system.mjs', 'lib/report.mjs', 'checkpoint.mjs', 'assert.mjs'];
 // copies that differ only in one named place: each [pattern, replacement] is applied to BOTH sides before comparing
 const SAME_AFTER = {
+  'lib/gates.mjs': [[/import \{ killTree \} from '\.\/(?:claude|agy)\.mjs';/, "import { killTree } from './<cli>.mjs';"]],
   'lib/state.mjs': [
     [/\(~\/\.(?:claude|gemini)\/plan-runs\//, '(~/<tool>/plan-runs/'],
     [/export const RUNS_ROOT = .*\n/, 'export const RUNS_ROOT = <per-tool default>;\n'],

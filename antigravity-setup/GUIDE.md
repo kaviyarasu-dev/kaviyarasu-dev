@@ -32,6 +32,10 @@ It reads your code first, asks only what the code cannot answer (in batches, wit
 
 It writes the plan folder (`manifest.json`, `INSTRUCTIONS.md`, `NNN-name.md`, `HANDOFF.md`), runs the validator, has a fresh agent read each plan and another audit the whole folder, shows you the table, and after your approval sets `phase: plans-approved`. It never starts the runner itself.
 
+### A whole application
+
+For a full application or a very large feature, run `/plan-research <product>` first (it researches the domain on the web and lets you pick the scope), then a fresh session and `/plan-feature <slug>`. For size L and XL it also writes `docs/plans/<slug>/ARCHITECTURE.md`, the locked stack, data model, API contracts and conventions every plan session must follow. `/plan-split` then writes the plans epic by epic, with a milestone at the end of each epic. When the runner pauses at a milestone, or stops because a whole-app check or the final review failed, run `/plan-replan <slug>` in agy: it updates the plans that have not run yet, or writes a repair plan. The manifest fields for these runs are in "Large runs" in the [runner README](payload/tools/plan-runner/README.md).
+
 ## 3. Run the plans
 
 Every repo in the plan must have no uncommitted changes. Then, in a **separate terminal** (not inside agy), from the main repo:
@@ -49,6 +53,7 @@ Useful variations:
 | `run.mjs run <slug> --dry-run` | Checks agy, the model names, the safety guard and the plan folder without using the model. |
 | `run.mjs status <slug>` | Shows where the run is. |
 | `run.mjs run <slug> --reset` | Starts over (the repos must be clean). |
+| `run.mjs run <slug> --reset --from <id>` | Starts over, counting the plans before `<id>` as done (their work is committed). |
 | `run.mjs run <slug> --no-isolation` | Uses your own agy settings. The session is NOT restricted. Only if agy cannot start in the throwaway HOME. |
 | `validate.mjs docs/plans/<slug>` | Checks a plan folder only. |
 

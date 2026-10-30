@@ -14,9 +14,20 @@ const emit = (o) => console.log(JSON.stringify(o));
 let mid = 0;
 const sid = 'fake-session';
 
-if (!planId) { // the final review session
+if (!planId) { // a read-only review: the per-plan review or the final review. cfg.review / cfg.finalReview: { modes: [...] }
+  const final = /unattended run just built/.test(prompt);
+  const rc = (final ? cfg.finalReview : cfg.review) || { modes: ['pass'] };
+  const cntR = `${process.env.FAKE_CFG}.cnt.${final ? 'final' : 'review'}`;
+  const k = (fs.existsSync(cntR) ? Number(fs.readFileSync(cntR, 'utf8')) : 0) + 1;
+  fs.writeFileSync(cntR, String(k));
+  const m = rc.modes[Math.min(k, rc.modes.length) - 1];
+  fs.appendFileSync(`${process.env.FAKE_CFG}.reviews.log`, `=== ${final ? 'final' : 'plan'} review ${k} mode ${m}\n${prompt}\n`);
+  const answers = {
+    pass: { verdict: 'pass', problems: [{ severity: 'low', file: 'src/a.js', problem: 'a name could be clearer', fix: 'rename it' }], summary: 'fine' },
+    fail: { verdict: 'fail', problems: [{ severity: 'high', file: 'check.js', problem: 'the test only checks that add exists, not what it returns', fix: 'assert add(1,2) === 3' }], summary: 'weak test' },
+  };
   emit({ type: 'system', subtype: 'init', model: 'fake', tools: [] });
-  emit({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, result: 'no findings', total_cost_usd: 0, session_id: sid });
+  emit({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, result: m === 'garbage' ? 'I could not decide.' : 'see json', total_cost_usd: 0.02, session_id: sid, ...(answers[m] ? { structured_output: answers[m] } : {}) });
   process.exit(0);
 }
 
@@ -25,7 +36,7 @@ const cnt = `${process.env.FAKE_CFG}.cnt.${planId}`;
 const n = (fs.existsSync(cnt) ? Number(fs.readFileSync(cnt, 'utf8')) : 0) + 1;
 fs.writeFileSync(cnt, String(n));
 const mode = plan.modes[Math.min(n, plan.modes.length) - 1];
-fs.appendFileSync(`${process.env.FAKE_CFG}.prompts.log`, `=== plan ${planId} session ${n} mode ${mode}\n${prompt}\n`);
+fs.appendFileSync(`${process.env.FAKE_CFG}.prompts.log`, `=== plan ${planId} session ${n} mode ${mode} secret=${process.env.FAKE_SECRET_API_KEY ? 'leaked' : 'none'}\n${prompt}\n`);
 
 const S = process.env.PLAN_RUNNER_SESSION ? JSON.parse(fs.readFileSync(process.env.PLAN_RUNNER_SESSION, 'utf8')) : null;
 const cp = (/node "([^"]+checkpoint\.mjs)"/.exec(prompt) || [])[1];
@@ -40,7 +51,7 @@ const tool = (name, input) => { const id = `t${++mid}`; emit({ type: 'assistant'
 /** The fixed-format report: every step of this session done, unless `over` says otherwise. */
 const report = (over = {}) => ({
   steps: Array.from({ length: Math.max(0, S.steps.length - S.resumeFrom + 1) }, (_, i) => ({ n: S.resumeFrom + i, done: true, reason: '' })),
-  not_done: [], different_from_plan: [], needs_person_check: [], summary: `fake summary for plan ${planId}`, ...over,
+  not_done: [], different_from_plan: [], needs_person_check: [], context: plan.context || [], summary: `fake summary for plan ${planId}`, ...over,
 });
 const result = (text = 'done', extra = {}, rep = report()) => emit({ type: 'result', subtype: 'success', is_error: false, num_turns: mid, result: text, total_cost_usd: 0.01, session_id: sid, ...(rep ? { structured_output: rep } : {}), ...extra });
 
@@ -134,6 +145,16 @@ switch (mode) {
   case 'deviation': await doAll(); result('done', {}, report({ different_from_plan: [{ step: 1, what: 'used unset() instead of imagedestroy()', reason: 'imagedestroy is deprecated' }], needs_person_check: ['open the page in a browser'] })); break;
   case 'deviation_noreason': await doAll(); result('done', {}, report({ different_from_plan: [{ step: 1, what: 'skipped the cache', reason: '' }] })); break;
   case 'otherrepo': await doAll(); writeRel('otherrepo/touched.txt', 'x'); result('done'); break;
+  case 'weaken': // does its own work, then edits a test a finished plan froze
+    await doAll();
+    writeRel('toyapp/a.test.js', 'weakened');
+    result('done');
+    break;
+  case 'break_a': // does its work but breaks plan 001's file, which only the full check notices
+    await doAll();
+    writeRel('toyapp/src/a.js', 'exports.add=(a,b)=>0;');
+    result('done');
+    break;
   case 'headmove':
     await doAll();
     spawnSync('git', ['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '--allow-empty', '-m', 'sneaky'], { cwd: S.repos.toyapp });

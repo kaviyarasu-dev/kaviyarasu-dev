@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Unattended plan runner for Antigravity CLI (agy). Same plan folders and manifest as the Claude Code runner.
-//   node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--no-isolation]
+//   node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--no-isolation] [--from <plan id>]
 //   node run.mjs status <slug> [--repo <path>]
 // Run it from inside the main repo (or pass --repo). Plans live in <repo>/docs/plans/<slug>/.
 // Rules: one fresh `agy -p` session per plan, never trust "done", no step is ever skipped (every step must be
@@ -19,14 +19,15 @@ import {
   changedPaths, scopeCheck, runList, phpLintChanged, DEP_FILES, secretFingerprint, secretChanges, gitHeads, headChanges,
   otherRepos, repoFingerprints, fingerprintChanges, RUNNER_DIR,
 } from './lib/gates.mjs';
-import { REPORT_SCHEMA, reportInstructions, extractReport, checkReport, formatReport } from './lib/report.mjs';
+import { REPORT_SCHEMA, REVIEW_SCHEMA, reportInstructions, extractReport, checkReport, checkReview, formatReport } from './lib/report.mjs';
 import { runDirFor, loadState, saveState, loadCheckpoints, checkpointsPath, acquireLock } from './lib/state.mjs';
 import { toast, keepAwake } from './lib/system.mjs';
-import { log, setLogFile, sleep, readJson, writeJsonAtomic, toPosix, tail, fmtDuration } from './lib/util.mjs';
+import { log, setLogFile, sleep, readJson, writeJsonAtomic, toPosix, tail, fmtDuration, scrubEnv as scrubSecrets } from './lib/util.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LIB = path.join(HERE, 'lib');
-const MAX_LIMIT_WAIT_MS = 12 * 3600 * 1000; // total time one run may wait for usage limits
+const DEFAULT_LIMIT_WAIT_H = 7 * 24; // the longest ONE usage-limit wait may be (weekly limits reset within a week)
+const CONTEXT_MAX = 300; // entries kept in CONTEXT.md (the oldest are dropped)
 // agy counts every tool call, Claude counts assistant turns. The manifest's turn numbers (est_turns, max_turns) are
 // Claude turns, so they are multiplied by this to get tool calls.
 const TOOL_CALLS_PER_TURN = 3;
@@ -41,7 +42,7 @@ const flag = (n) => argv.includes(n);
 const opt = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
 const slug = argv[1] && !argv[1].startsWith('--') ? argv[1] : undefined;
 if (!['run', 'status'].includes(cmd) || !slug) {
-  console.log('Usage:\n  node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--no-isolation]\n  node run.mjs status <slug> [--repo <path>]');
+  console.log('Usage:\n  node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--no-isolation] [--from <plan id>]\n  node run.mjs status <slug> [--repo <path>]');
   process.exit(2);
 }
 const noIsolation = flag('--no-isolation');
@@ -140,6 +141,10 @@ async function main() {
   const idxFile = (n) => path.join(runDir, 'index', n);
   const snapAll = () => Object.fromEntries(Object.entries(repos).map(([n, d]) => [n, snapshot(d, idxFile(n))]));
   const equalTrees = (a, b) => Object.keys(repos).every((n) => a?.[n] === b?.[n]);
+  const from = opt('--from');
+  if (from && st) refuse('--from only works on a fresh run. Add --reset (the repos must be clean: commit the work you keep first).');
+  const fromIdx = from ? manifest.plans.findIndex((p) => p.id === from) : -1;
+  if (from && fromIdx < 0) refuse(`--from: there is no plan "${from}" in the manifest.`);
 
   if (!st) {
     for (const [n, d] of Object.entries(repos)) {
@@ -148,12 +153,25 @@ async function main() {
     }
     const trees = snapAll();
     st = { feature: slug, primary, created: new Date().toISOString(), status: 'running', setupDone: false, baseTrees: trees, lastGoodTrees: trees,
-      stoppedTrees: null, doneSinceSweep: 0, sweepPending: false, waitedMs: 0, plans: {}, repos, isolation: noIsolation ? 'none' : 'throwaway HOME' };
+      stoppedTrees: null, doneSinceSweep: 0, sweepPending: false, e2ePending: false, sinceSweep: [], pausesDone: [], waitedMs: 0, plans: {}, repos,
+      isolation: noIsolation ? 'none' : 'throwaway HOME', archHash: archHash() };
+    // --from: the plans before it were finished in an earlier run and their work is committed. They count as done.
+    for (const p of manifest.plans.slice(0, Math.max(0, fromIdx))) {
+      st.plans[p.id] = { status: 'done', adopted: true, hash: planHash(p), stepsHash: stepsHash(p), endTrees: trees, finishedAt: st.created, attempts: 0, tries: 0, sessions: 0, turns: 0, refused: 0, patches: [], failures: [] };
+    }
     saveState(runDir, st);
-    log('System', 'Fresh run. Both repos were clean.');
+    log('System', `Fresh run. Both repos were clean.${fromIdx > 0 ? ` Plans before ${from} (${fromIdx}) count as done (--from).` : ''}`);
   } else {
     if (st.status === 'complete') { log('System', 'This run is already complete. Use --reset to run it again.'); return; }
     st.status = 'running'; st.haltReason = null;
+    st.waitedMs = 0; // the usage-limit wait budget is per start, never carried over
+    st.sinceSweep ||= []; st.pausesDone ||= [];
+    const ah = archHash();
+    if (st.archHash && ah !== st.archHash) {
+      log('System', 'WARNING: ARCHITECTURE.md changed since the run started. The plans still to run will follow the new version; the finished ones were built on the old one.');
+      (st.archChanges ||= []).push(new Date().toISOString());
+    }
+    st.archHash = ah;
     // a plan the last process died in is rolled back to its last checkpoint by executePlan
     const running = Object.entries(st.plans).find(([, p]) => p.status === 'running');
     if (running) log('System', `Plan ${running[0]} was interrupted. It will be rolled back to its last good point.`);
@@ -186,7 +204,10 @@ async function main() {
 
   const others = otherRepos(path.dirname(primary), Object.values(repos));
   if (others.length) log('System', `Watching ${others.length} other repo(s) next to the project for changes: ${others.map((d) => path.basename(d)).join(', ')}.`);
-  Object.assign(ctx, { st, snapAll, equalTrees, idxFile, every, secretsBefore: secretFingerprint(repos), others, othersBefore: repoFingerprints(others) });
+  const big = ['L', 'XL'].includes(manifest.size);
+  Object.assign(ctx, { st, snapAll, equalTrees, idxFile, every, secretsBefore: secretFingerprint(repos), others, othersBefore: repoFingerprints(others),
+    planReview: manifest.plan_review ?? big, reviewBlocks: manifest.final_review_blocks ?? big });
+  if (ctx.planReview) log('System', 'Every plan is read by a separate read-only reviewer before it counts as done (plan_review).');
 
   if (flag('--dry-run')) {
     log('System', 'Dry run. agy, the models and the guard are OK. Order of plans:');
@@ -201,18 +222,24 @@ async function main() {
     if (!r.ok) halt(`Setup failed.\n${r.failure}`);
     st.setupDone = true; saveState(runDir, st);
   }
+  writeReport('RUNNING');
 
-  // 8. the plans, strictly in order
-  if (st.sweepPending) await sweep(`before resuming`);
+  // 8. the plans, strictly in order. A failed full or end-to-end check is repeated before the next normal plan, so
+  // the run never builds on a broken base; "repair" plans (added after such a failure) run before that repeat.
   for (const plan of manifest.plans) {
     const ps = (st.plans[plan.id] ||= { status: 'pending', attempts: 0, tries: 0, sessions: 0, continuations: 0, limitWaits: 0, turns: 0, refused: 0, patches: [], failures: [] });
     if (ps.status === 'done') continue;
+    if (!plan.repair) {
+      if (st.sweepPending) await sweep(`before plan ${plan.id}`);
+      if (st.e2ePending) await e2e(`before plan ${plan.id}`);
+    }
     for (const d of plan.depends_on) if (st.plans[d]?.status !== 'done') halt(`Plan ${plan.id} depends on ${d}, which is not done.`);
     await executePlan(plan, ps);
   }
 
-  // 9. finish
+  // 9. finish: the whole suite, the app end to end, then the read-only review of everything
   await sweep('after the last plan');
+  await e2e('at the end');
   await finalReview();
   st.status = 'complete'; st.finished = new Date().toISOString(); saveState(runDir, st);
   writeReport('COMPLETE');
@@ -237,6 +264,9 @@ function guardScope(review = false) {
   return { roots: Object.values(ctx.repos), planDir, allowWrite: [os.tmpdir(), homeDir(review)] };
 }
 
+/** True when the run starts read-only review sessions (the final review, or a review of every plan). */
+function reviews(m) { return m.final_review !== false || (m.plan_review ?? ['L', 'XL'].includes(m.size)); }
+
 /** Everything that can be checked without spending model usage. Refuses to start when something is wrong. */
 function preflight() {
   const { manifest, perms } = ctx;
@@ -251,7 +281,7 @@ function preflight() {
     if (bad) refuse(`The safety guard failed its self-test: ${bad}`);
     log('System', 'Safety guard self-test passed (it refuses git changes, secret files and writes outside the project, and lets normal commands through).');
     env = sessionEnv(process.env, ctx.env, homeDir());
-    if (manifest.final_review !== false) { // the read-only home of the final review is checked now too, so a bad one cannot surprise the end of a long run
+    if (reviews(manifest)) { // the read-only home of the reviews is checked now too, so a bad one cannot surprise the end of a long run
       const rev = buildSessionHome({ dir: homeDir(true), permissions: perms, manifestDeny: manifest.permissions?.deny || [], libDir: LIB, readOnly: true, scope: guardScope(true) });
       const badRev = selfTestGuard(rev.cfgDir, { readOnly: true });
       if (badRev) refuse(`The read-only guard of the final review failed its self-test: ${badRev}`);
@@ -259,7 +289,7 @@ function preflight() {
   }
   const probe = probeAgy(env, primary);
   if (!probe.ok) refuse(`agy could not start${noIsolation ? '' : ' in its isolated HOME'}: ${probe.error}${noIsolation ? '' : '\nIf agy cannot sign in from the isolated HOME on this computer, run with --no-isolation (then the session itself is not restricted).'}`);
-  const need = new Set([...(manifest.final_review === false ? [] : [reviewModel()]), ...manifest.plans.map(modelFor)]);
+  const need = new Set([...(reviews(manifest) ? [reviewModel()] : []), ...manifest.plans.map(modelFor)]);
   for (const m of need) if (!probe.slugs.includes(m)) refuse(`The model "${m}" is not available in agy. Run "agy models" and fix config/models.json or the manifest (model / agy_model). Available: ${probe.slugs.join(', ')}`);
   log('System', `agy OK. Models in use: ${[...need].join(', ')}.${noIsolation ? '' : ' Each session runs in its own throwaway HOME.'}`);
 }
@@ -267,7 +297,7 @@ function preflight() {
 /** One agy session. review=true gives it read access only. */
 async function agySession(o) {
   const { perms, manifest } = ctx;
-  const vars = { ...ctx.env, PLAN_RUNNER: '1', PLAN_RUNNER_SESSION: o.sessionFile };
+  const vars = { ...passEnv(), ...ctx.env, PLAN_RUNNER: '1', PLAN_RUNNER_SESSION: o.sessionFile };
   let env;
   let deniedLog = null;
   if (noIsolation) env = { ...scrubEnv(process.env), ...vars };
@@ -306,10 +336,10 @@ async function executePlan(plan, ps) {
     Object.assign(ps, { status: 'running', startedAt: new Date().toISOString(), startTrees: snapAll(), hash: planHash(plan), stepsHash: stepsHash(plan) });
     fs.rmSync(checkpointsPath(runDir, plan.id), { force: true });
     saveState(runDir, st);
-    if (manifest.precheck !== false && plan.precheck !== false) await precheck(plan, ps, planRunDir);
+    if (manifest.precheck !== false && plan.precheck !== false) { await prepareEnv('pre-check'); await precheck(plan, ps, planRunDir); }
   } else {
     if (ps.restart) restartPlan(plan, ps, planRunDir);
-    if (ps.recheck) await recheckKept(plan, ps, planRunDir);
+    if (ps.recheck) { await prepareEnv('re-check'); await recheckKept(plan, ps, planRunDir); }
   }
   saveState(runDir, st);
 
@@ -321,6 +351,9 @@ async function executePlan(plan, ps) {
     // Make the files match the last good point exactly. A crash or failed try may have left debris.
     const cur = snapAll();
     if (!equalTrees(cur, baseTrees)) rollbackTo(baseTrees, cur, planRunDir, `partial-${ps.sessionNo || 0}`, ps);
+    // ...and the test database (and installed packages) match those files: a rolled-back try must not leave its
+    // migrations or rows behind for the next one.
+    await prepareEnv(`plan ${plan.id}`);
 
     const curStep = lastStep < plan.steps.length ? lastStep + 1 : 'final';
     if (ps.tryStep !== curStep) { ps.tryStep = curStep; ps.tries = 0; }
@@ -336,6 +369,7 @@ async function executePlan(plan, ps) {
       runDir, planId: plan.id, repos, defaultRepo: planRepos[0], env: ctx.env, allowed: plan.allowed_paths,
       extra: plan.allow_extra || [], planDirRel, primaryName, startTrees: ps.startTrees, steps: plan.steps,
       checkpointsPath: checkpointsPath(runDir, plan.id), resumeFrom: lastStep + 1,
+      frozen: frozenFor(plan), unfreeze: plan.unfreeze || [],
     });
 
     const prompt = buildPrompt(plan, ps, lastStep);
@@ -372,7 +406,7 @@ async function executePlan(plan, ps) {
 
     // (a) usage limit or spent credits: wait, do not count a try
     if (quotaError(facts)) {
-      if (++ps.limitWaits > 20) finalFail(plan, ps, 'it hit the usage limit too many times');
+      ps.limitWaits = (ps.limitWaits || 0) + 1; // no count limit: agy gives no reset time, so waitForLimit caps the total wait
       await waitForLimit(facts);
       continue;
     }
@@ -414,6 +448,10 @@ async function executePlan(plan, ps) {
     else {
       const g = await acceptance(plan, ps);
       if (!g.ok) failure = g.failure;
+      else if (ctx.planReview && plan.review !== false) {
+        const rv = await planReview(plan, ps, rep, planRunDir);
+        if (!rv.ok) failure = rv.failure;
+      }
     }
 
     if (!failure) {
@@ -421,11 +459,16 @@ async function executePlan(plan, ps) {
       ps.summary = rep.summary || String(r?.response || '').trim();
       Object.assign(ps, { status: 'done', finishedAt: new Date().toISOString(), lastFailure: null, hash: planHash(plan) });
       writeHandoff(plan, ps);
+      writeContext(plan, rep);
       st.lastGoodTrees = snapAll();
+      ps.endTrees = st.lastGoodTrees;
       st.doneSinceSweep++;
+      st.sinceSweep.push(plan.id);
       saveState(runDir, st);
       log('System', `Plan ${plan.id} DONE.`);
+      writeReport('RUNNING');
       if (st.doneSinceSweep >= ctx.every) await sweep(`after plan ${plan.id}`);
+      if ((manifest.pause_after || []).includes(plan.id) && !st.pausesDone.includes(plan.id)) await milestone(plan);
       return;
     }
 
@@ -448,8 +491,8 @@ async function acceptance(plan, ps) {
   const changed = changedPaths(repos, ps.startTrees, cur);
   log('Gate', `${changed.length} file(s) changed by plan ${plan.id}.`);
 
-  const sc = scopeCheck({ changed, allowed: plan.allowed_paths, extra: plan.allow_extra || [], planDirRel, primaryName });
-  if (!sc.ok) return { ok: false, failure: `SCOPE GATE: the session changed blocked files (git, secrets, agent settings or the plan folder):\n${sc.violations.join('\n')}` };
+  const sc = scopeCheck({ changed, allowed: plan.allowed_paths, extra: plan.allow_extra || [], planDirRel, primaryName, frozen: frozenFor(plan), unfreeze: plan.unfreeze || [] });
+  if (!sc.ok) return { ok: false, failure: `SCOPE GATE: the session changed blocked files (git, secrets, agent settings, the plan folder or a frozen test):\n${sc.violations.join('\n')}` };
   if (sc.outside.length) log('Gate', `${sc.outside.length} file(s) changed outside allowed_paths (allowed, listed in the report): ${sc.outside.slice(0, 5).join(', ')}${sc.outside.length > 5 ? ', ...' : ''}`);
 
   if (manifest.php_lint !== false) {
@@ -526,49 +569,193 @@ function restartPlan(plan, ps, planRunDir) {
   Object.assign(ps, { hash: planHash(plan), stepsHash: stepsHash(plan) });
 }
 
+/** Before every session and every whole-app check: reinstall packages a rollback changed, then reset the test database. */
+async function prepareEnv(label) {
+  const { st, manifest, repos } = ctx;
+  if (st.depsDirty) {
+    const list = manifest.deps_install || [];
+    if (list.length) {
+      log('System', 'A rollback changed package files. Reinstalling (deps_install).');
+      const r = await runList(list, { repos, defaultRepo: primaryName, env: gateEnv(), label: 'deps_install' });
+      if (!r.ok) halt(`deps_install failed (${label}). Fix the environment, then run the same command again.\n${r.failure}`);
+    } else log('System', 'WARNING: a rollback changed package files, so installed packages (node_modules, vendor ...) may not match them. Add "deps_install" to the manifest to reinstall them automatically.');
+    st.depsDirty = false; saveState(runDir, st);
+  }
+  const reset = manifest.reset || [];
+  if (!reset.length) return;
+  const r = await runList(reset, { repos, defaultRepo: primaryName, env: gateEnv(), label: 'reset' });
+  if (!r.ok) halt(`The reset commands failed (${label}). They must rebuild the throwaway test database from the current files. Fix them or the environment, then run the same command again.\n${r.failure}`);
+}
+
+/** What to do after a whole-app check or the final review fails. */
+function repairHint() {
+  const last = [...ctx.manifest.plans].reverse().find((p) => ctx.st.plans[p.id]?.status === 'done');
+  return `Fix it with a REPAIR plan, not by hand: run /plan-replan ${slug} (it writes one), or add a plan to manifest.json right after plan ${last?.id ?? '(the last finished one)'} with "repair": true and a step whose check is the failing command. Then run the same command again: repair plans run first, then this check is repeated before any other plan.`;
+}
+
 async function sweep(when) {
   const { st, manifest, repos } = ctx;
   const list = manifest.full_gates || [];
-  if (!list.length) { st.doneSinceSweep = 0; st.sweepPending = false; saveState(runDir, st); return; }
+  if (!list.length) { st.doneSinceSweep = 0; st.sweepPending = false; st.sinceSweep = []; saveState(runDir, st); return; }
   log('System', `Full check ${when}.`);
   st.sweepPending = true; saveState(runDir, st);
+  await prepareEnv('full check');
   const r = await runList(list, { repos, defaultRepo: primaryName, env: gateEnv(), changed: [], label: 'full check' });
-  if (!r.ok) halt(`The full check failed ${when}. Nothing after this ran.\n${r.failure}`);
-  st.doneSinceSweep = 0; st.sweepPending = false; saveState(runDir, st);
+  if (!r.ok) {
+    const culprit = await bisect(list, 'full check');
+    halt(`The full check failed ${when}. Nothing after this ran.\n${culprit}${r.failure}\n\n${repairHint()}`);
+  }
+  st.doneSinceSweep = 0; st.sweepPending = false; st.sinceSweep = []; saveState(runDir, st);
 }
 
-async function finalReview() {
-  const { st, repos, manifest, snapAll } = ctx;
-  if (manifest.final_review === false) return;
-  const cur = snapAll();
-  let any = false;
-  let patchNote = '';
-  for (const [n, d] of Object.entries(repos)) {
-    const p = patchBetween(d, st.baseTrees[n], cur[n]);
-    if (!p) continue;
-    any = true;
-    const f = path.join(runDir, `final-${n}.patch`);
-    fs.writeFileSync(f, p);
-    patchNote += `\n- ${n}: ${toPosix(f)}`;
+/** The app end to end (start it, run the user journeys). At every milestone and at the end. */
+async function e2e(when) {
+  const { st, manifest, repos } = ctx;
+  const list = manifest.e2e_gates || [];
+  if (!list.length) { if (st.e2ePending) { st.e2ePending = false; saveState(runDir, st); } return; }
+  log('System', `End-to-end check ${when}.`);
+  st.e2ePending = true; saveState(runDir, st);
+  await prepareEnv('end-to-end check');
+  const r = await runList(list, { repos, defaultRepo: primaryName, env: gateEnv(), changed: [], label: 'end-to-end check' });
+  if (!r.ok) halt(`The end-to-end check failed ${when}. Every plan passed its own checks, but the app does not work as a whole.\n${r.failure}\n\n${repairHint()}`);
+  st.e2ePending = false; saveState(runDir, st);
+}
+
+/**
+ * The full check failed: find the first plan since the last green check after which it fails, by putting the files back
+ * to each candidate's finished state (a binary search). It assumes the check passed before those plans. The files are
+ * always put back as they were. Returns a line for the halt message ('' when it cannot tell).
+ */
+async function bisect(list, label) {
+  const { st, manifest, repos, snapAll } = ctx;
+  const ids = (st.sinceSweep || []).filter((id) => st.plans[id]?.endTrees);
+  if (!ids.length) return '';
+  let found = ids[0];
+  if (ids.length > 1 && manifest.bisect !== false) {
+    log('System', `Finding which of plans ${ids.join(', ')} broke the ${label} (the files are put back afterwards).`);
+    const cur = snapAll();
+    try {
+      let lo = 0, hi = ids.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        for (const [n, d] of Object.entries(repos)) restore(d, st.plans[ids[mid]].endTrees[n], ctx.idxFile(n));
+        st.depsDirty = true;
+        await prepareEnv(`finding the plan that broke the ${label}`);
+        const r = await runList(list, { repos, defaultRepo: primaryName, env: gateEnv(), changed: [], label: `${label} after plan ${ids[mid]}` });
+        if (r.ok) lo = mid + 1; else hi = mid;
+      }
+      found = ids[lo];
+    } catch (e) {
+      log('System', `Could not finish the search (${e.message}).`);
+      found = null;
+    } finally {
+      for (const [n, d] of Object.entries(repos)) restore(d, cur[n], ctx.idxFile(n));
+      st.depsDirty = true; saveState(runDir, st);
+    }
   }
-  if (!any) return;
-  log('System', 'Final security review (read-only).');
-  const prompt = `You are a read-only reviewer. An unattended run just changed code in these repositories; the full diffs are in these patch files:${patchNote}\n\nReview ONLY those changes for security and privacy problems: who can call this code, whether identity comes from the server session, input validation, SQL injection, exposed personal data or secrets, and new dependencies in package.json. You can only read files: do not try to run commands or edit anything. Reply with a short list: severity, file, the problem, the fix. If nothing is wrong say "no findings".`;
-  log('System', 'Starting agy for the final review...');
+  if (!found) return '';
+  st.bisect = { at: new Date().toISOString(), label, plan: found, candidates: ids };
+  saveState(runDir, st);
+  return `It first fails after plan ${found}${ids.length > 1 ? ` (checked plans ${ids.join(', ')}; assumes the check passed before them)` : ''}.\n`;
+}
+
+/** A milestone in "pause_after": check the whole app, then stop so a person can look at it. */
+async function milestone(plan) {
+  const { st } = ctx;
+  if (st.doneSinceSweep > 0) await sweep(`at milestone ${plan.id}`);
+  await e2e(`at milestone ${plan.id}`);
+  st.pausesDone.push(plan.id);
+  const devs = Object.values(st.plans).reduce((a, p) => a + (p.deviations || []).length, 0);
+  pause(`Milestone after plan ${plan.id}: the full and end-to-end checks passed. Look at the app now (run it, try the journeys of the finished plans), and read REPORT.md.${devs ? ` ${devs} thing(s) were done differently from the plan: if a later plan relies on them, run /plan-replan ${slug} first.` : ''} Then run the same command again to continue.`);
+}
+
+/** One read-only agy session that answers in REVIEW_SCHEMA. Returns the checked answer. */
+async function reviewSession({ prompt, rawLog, maxToolSteps }) {
+  const { repos } = ctx;
+  const schemaFile = path.join(runDir, 'review-schema.json');
+  writeJsonAtomic(schemaFile, REVIEW_SCHEMA);
   let facts;
   try {
     facts = await agySession({
-      review: true, prompt, model: reviewModel(), cwd: Object.values(repos)[0], extraDirs: [runDir, ...Object.values(repos).slice(1)],
-      sessionFile: path.join(runDir, 'session.json'), idleMs: 10 * 60000, timeoutMs: 30 * 60000, maxToolSteps: 100, rawLog: path.join(runDir, 'final-review.jsonl'),
+      review: true, prompt, model: reviewModel(), cwd: Object.values(repos)[0], extraDirs: [runDir, planDir, ...Object.values(repos).slice(1)], schemaFile,
+      sessionFile: path.join(runDir, 'session.json'), idleMs: 10 * 60000, timeoutMs: 30 * 60000, maxToolSteps, rawLog,
     });
-  } catch (e) { // a review that cannot run safely is skipped, and the report says so
-    st.finalReview = `(the final review did not run: ${e.message})`;
-    saveState(runDir, st);
-    return;
+  } catch (e) { return { ok: false, failure: `the review could not run safely (${e.message})` }; }
+  if (quotaError(facts)) { await waitForLimit(facts); return reviewSession({ prompt, rawLog, maxToolSteps }); }
+  const r = facts.result;
+  const rv = checkReview(extractReport(r?.structured_output, r?.response, 'verdict'));
+  return rv.ok ? rv : { ...rv, failure: `${rv.failure}${facts.killedFor || !r ? ` (${describeFailure(facts)})` : ''}` };
+}
+
+/** Diffs of a plan's work, one patch file per changed repo. Returns the list of "- repo: file" lines. */
+function writePatches(fromTrees, cur, dir, tag) {
+  let note = '';
+  for (const [n, d] of Object.entries(ctx.repos)) {
+    const p = patchBetween(d, fromTrees[n], cur[n]);
+    if (!p) continue;
+    const f = path.join(dir, `${tag}-${n}.patch`);
+    fs.writeFileSync(f, p);
+    note += `\n- ${n}: ${toPosix(f)}`;
   }
-  const text = facts.result?.status === 'SUCCESS' ? facts.result.response : null;
-  st.finalReview = text ? String(text) : `(the final review did not finish: ${facts.killedFor || describeFailure(facts)})`;
+  return note;
+}
+
+function docList() { return ['ARCHITECTURE.md', 'CONTEXT.md'].filter((f) => fs.existsSync(path.join(planDir, f))).map((f) => toPosix(path.join(planDir, f))); }
+
+/**
+ * A separate read-only session reads the plan's diff against the plan and the architecture. The checks only prove that
+ * commands exit 0; this asks whether they prove the right thing (a test that passes when the code is wrong, a stub,
+ * a contradiction with the architecture). A critical or high problem is a failed try with the problems as the reason.
+ */
+async function planReview(plan, ps, rep, planRunDir) {
+  const patches = writePatches(ps.startTrees, ctx.snapAll(), planRunDir, `review-${ps.sessionNo}`);
+  if (!patches) return { ok: true };
+  const docs = docList();
+  log('System', `Plan review of ${plan.id} (read-only).`);
+  const prompt = `You are a strict, read-only REVIEWER of one plan of an unattended build. You did not write this code. Nobody can answer questions. You can only read files: do not try to run commands or edit anything.
+
+Plan file: ${toPosix(path.join(planDir, plan.file))}
+${docs.length ? `Project documents the code must follow: ${docs.join(', ')}\n` : ''}The plan's changes (diffs): ${patches}
+The checks the runner ran (all passed): ${JSON.stringify([...plan.steps.flatMap((s) => s.verify || []), ...plan.verify])}
+What the session reported: ${JSON.stringify({ different_from_plan: rep.deviations, summary: rep.summary }).slice(0, 4000)}
+
+Read the plan, the documents and the diffs (open the changed files when you need more). Then answer:
+1. Do the tests and checks really prove every Acceptance item and every item of every step? Name each test or check that would still pass if the code were wrong: trivial asserts, mocking the very thing under test, hard-coded expected values, skipped or deleted tests, assertions weakened, a check that only greps for a name.
+2. Is anything the plan asks for missing, stubbed, faked or hard-coded (TODO, "not implemented", a fixed return value)?
+3. Does the code contradict the architecture document (stack, data model, API contracts, auth, error format, conventions), or duplicate something CONTEXT.md says already exists?
+4. Security in this diff: who can call it, identity from the server session, input validation, injection, secrets, money or prices in floating point.
+
+Severity: "critical" or "high" ONLY when the plan's goal is not really met, a check proves nothing, or the code is unsafe. Style, naming and nice-to-haves are "medium" or "low". "verdict" is "fail" when there is any critical or high problem, else "pass". Give the file and a concrete fix for each problem. End with the JSON answer only.`;
+  const run = () => reviewSession({ prompt, rawLog: path.join(planRunDir, `review-${ps.sessionNo}.jsonl`), maxToolSteps: 90 });
+  let rv = await run();
+  if (!rv.ok) { log('System', `The plan review gave no valid answer (${rv.failure}). Trying it once more.`); rv = await run(); }
+  if (!rv.ok) {
+    ps.review = `(the plan review did not finish: ${rv.failure})`;
+    log('System', `WARNING: ${ps.review} Plan ${plan.id} is judged by its checks only (listed in the report).`);
+    return { ok: true };
+  }
+  ps.review = rv.text;
+  if (!rv.blocking.length) { log('System', `Plan review of ${plan.id}: pass${rv.problems.length ? ` (${rv.problems.length} minor finding(s), in the report)` : ''}.`); return { ok: true }; }
+  return { ok: false, failure: `PLAN REVIEW: a read-only reviewer read the diff and found problems that must be fixed (the checks passed, but they do not prove the work is right):\n${rv.text}` };
+}
+
+async function finalReview() {
+  const { st, manifest, snapAll } = ctx;
+  if (manifest.final_review === false) return;
+  const patchNote = writePatches(st.baseTrees, snapAll(), runDir, 'final');
+  if (!patchNote) return;
+  log('System', 'Final security review (read-only).');
+  const docs = docList();
+  const prompt = `You are a read-only REVIEWER. An unattended run just built or changed code in these repositories; the full diffs are in these patch files:${patchNote}
+${docs.length ? `The architecture and the map of what was built: ${docs.join(', ')}\n` : ''}
+The diff may be large: search it for what matters instead of reading it all. You can only read files: do not try to run commands or edit anything. Review the changes for security, privacy and production problems: who can call each endpoint, whether identity comes from the server session, authorization on every object, input validation, injection, exposed personal data or secrets, money handled in floating point, missing rate limits on login and money movements, missing idempotency on payments and orders, missing audit logs, and new dependencies. "critical" or "high" only for a real exploitable or data-losing problem. "verdict" is "fail" when there is any critical or high problem. End with the JSON answer only.`;
+  log('System', 'Starting agy for the final review...');
+  const rv = await reviewSession({ prompt, rawLog: path.join(runDir, 'final-review.jsonl'), maxToolSteps: 120 });
+  st.finalReview = rv.ok ? rv.text : `(the final review did not finish: ${rv.failure})`;
   saveState(runDir, st);
+  if (!ctx.reviewBlocks) return;
+  if (!rv.ok) halt(`The final review did not finish (${rv.failure}), and final_review_blocks is on. Run the same command again to repeat it.`);
+  if (rv.blocking.length) halt(`The final review found ${rv.blocking.length} critical or high problem(s):\n${rv.text}\n\n${repairHint()}\n(To accept them instead, set "final_review_blocks": false in the manifest.)`);
 }
 
 // ---------- helpers ----------
@@ -581,6 +768,14 @@ function planText(plan) { try { return fs.readFileSync(path.join(planDir, plan.f
 function planHash(plan) { return sha(`${JSON.stringify(plan)}\n${planText(plan)}`); }
 /** Only the steps: when these change, kept checkpoints no longer mean anything. */
 function stepsHash(plan) { return sha(JSON.stringify(plan.steps)); }
+function archHash() { try { return sha(fs.readFileSync(path.join(planDir, 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n')); } catch { return null; } }
+
+/** The files finished plans froze (their tests and test config), which this plan may not change. */
+function frozenFor(plan) {
+  const { st, manifest } = ctx;
+  return manifest.plans.filter((p) => p.id !== plan.id && st.plans[p.id]?.status === 'done')
+    .flatMap((p) => (p.freeze || []).map((glob) => ({ glob, by: p.id })));
+}
 
 /** Trees of the last checkpoint of this plan, or of its start. */
 function checkpointTrees(plan, ps) {
@@ -602,6 +797,7 @@ function rollbackTo(baseTrees, cur, planRunDir, tag, ps) {
   const saved = [];
   for (const [n, d] of Object.entries(repos)) {
     if (cur[n] === baseTrees[n]) continue;
+    if (changedBetween(d, baseTrees[n], cur[n]).some((c) => DEP_FILES.includes(path.posix.basename(c.path)))) ctx.st.depsDirty = true;
     const patch = patchBetween(d, baseTrees[n], cur[n]);
     if (patch) {
       const f = path.join(planRunDir, `${tag}-${n}.patch`);
@@ -693,15 +889,20 @@ function finalFail(plan, ps, why) {
   halt(`Plan ${plan.id} FAILED: ${why}.\nLast reason:\n${tail(ps.lastFailure || '(none recorded)', 1500)}\n\nEvery reason is in ${logFile}.\n${keptText(kept)}\nFix the cause (usually the plan file, a check, or the environment), then run the same command again: it re-checks the kept steps and goes on from step ${kept + 1}.`);
 }
 
-function halt(reason) {
+function halt(reason) { stop('halted', 'HALTED', reason, 1); }
+
+/** A planned stop (a milestone): exit code 0, the same resume rules as a halt. */
+function pause(reason) { stop('paused', 'PAUSED', reason, 0); }
+
+function stop(status, outcome, reason, code) {
   const { st } = ctx;
-  st.status = 'halted'; st.haltReason = reason;
+  st.status = status; st.haltReason = reason;
   try { st.stoppedTrees = ctx.snapAll(); } catch { /* keep going: the reason matters more */ }
   saveState(runDir, st);
-  log('System', `HALTED: ${reason}`);
-  writeReport('HALTED');
-  toast('Plan run stopped', `${slug}: ${reason.split('\n')[0].slice(0, 180)}`);
-  const e = new Halt(reason); e.code = 1; throw e;
+  log('System', `${outcome}: ${reason}`);
+  writeReport(outcome);
+  toast(code ? 'Plan run stopped' : 'Plan run paused for review', `${slug}: ${reason.split('\n')[0].slice(0, 180)}`);
+  const e = new Halt(reason); e.code = code; throw e;
 }
 
 function refuse(msg) {
@@ -715,7 +916,9 @@ async function waitForLimit(f) {
   // agy does not report a reset time the runner can read, so wait the server's retry delay when there is one, else 15 minutes.
   let ms = fast ? 1000 : (retryAfterMs(f) ?? 15 * 60000);
   if (!fast) ms = Math.max(60000, ms);
-  if (st.waitedMs + ms > MAX_LIMIT_WAIT_MS) halt('Waited too long for the usage limit to reset.');
+  // agy gives no reset time, so the cap is on the total wait since this start (a resume starts a new budget)
+  const capH = ctx.manifest.max_limit_wait_hours ?? DEFAULT_LIMIT_WAIT_H;
+  if (st.waitedMs + ms > capH * 3600000) halt(`Waited ${fmtDuration(st.waitedMs)} for the usage limit since this start, the most max_limit_wait_hours (${capH}) allows. Run the same command again after the reset.`);
   const until = new Date(Date.now() + ms).toLocaleTimeString();
   log('System', `Usage limit reached. Waiting until ${until} (${fmtDuration(ms)}), then retrying the same plan.`);
   toast('Plan run paused', `Usage limit. Resumes about ${until}.`);
@@ -757,7 +960,7 @@ Plan file: ${toPosix(path.join(planDir, plan.file))}
 Workspace folders:
 ${folders}
 
-Read, in this order: ${toPosix(path.join(planDir, 'INSTRUCTIONS.md'))}, ${toPosix(path.join(planDir, 'HANDOFF.md'))}, then the plan file. Do exactly that plan and nothing else.
+${readOrder(plan)}
 
 CHECKPOINTS: after you finish each numbered step, run this exact command:
   node "${cp}" <step number>
@@ -772,6 +975,35 @@ If a command from the plan contains {{runner}}, that stands for ${RUNNER_DIR}: p
 Reminders (the full rules are in INSTRUCTIONS.md): never ask the user a question; never commit, push or change git state; if you truly cannot continue, write BLOCKED.md in ${toPosix(planDir)} with the reason and what you tried, then stop. When every step is checkpointed, run the Acceptance commands, then give the final report.
 
 ${reportInstructions(Math.min(lastStep + 1, n + 1), n)}`;
+}
+
+/**
+ * What a session reads before its plan. ARCHITECTURE.md holds the decisions every plan must follow; CONTEXT.md is the
+ * short, kept-current map of what earlier plans built. HANDOFF.md is the full history and grows with every plan, so it
+ * is searched, not read whole.
+ */
+function readOrder(plan) {
+  const f = (n) => toPosix(path.join(planDir, n));
+  const has = (n) => fs.existsSync(path.join(planDir, n));
+  const list = [f('INSTRUCTIONS.md'), ...(has('ARCHITECTURE.md') ? [f('ARCHITECTURE.md')] : []), ...(has('CONTEXT.md') ? [f('CONTEXT.md')] : [])];
+  const frozen = frozenFor(plan);
+  return `Read, in this order: ${list.join(', ')}, then the plan file. Do exactly that plan and nothing else.${has('ARCHITECTURE.md') ? '\nARCHITECTURE.md is locked: follow its stack, data model, API contracts, auth and conventions exactly. If the plan seems to need something different, do it the architecture\'s way and list it under "different_from_plan"; if that is impossible, write BLOCKED.md.' : ''}${has('CONTEXT.md') ? '\nCONTEXT.md lists what earlier plans built. Reuse it; never write a second version of something listed there.' : ''}
+${toPosix(path.join(planDir, 'HANDOFF.md'))} is the full history of earlier plans. It is long: search it (grep_search) when you need an older detail instead of reading all of it.${frozen.length ? `\nFrozen (tests and test config of finished plans; you may not change them${(plan.unfreeze || []).length ? `, except ${plan.unfreeze.join(', ')}` : ''}): ${frozen.map((x) => x.glob).join(', ')}. If one fails, fix the code, not the test.` : ''}`;
+}
+
+/** Merges the session's "context" entries into the plan folder's CONTEXT.md (and context.json, its source). */
+function writeContext(plan, rep) {
+  const jf = path.join(planDir, 'context.json');
+  const map = readJson(jf, {});
+  let seq = Math.max(0, ...Object.values(map).map((v) => v.seq || 0));
+  for (const c of rep.context || []) map[c.key] = { text: c.text, plan: plan.id, seq: ++seq };
+  const keys = Object.keys(map).sort((a, b) => map[b].seq - map[a].seq).slice(0, CONTEXT_MAX);
+  const kept = Object.fromEntries(keys.map((k) => [k, map[k]]));
+  writeJsonAtomic(jf, kept);
+  const handoff = fs.existsSync(path.join(planDir, 'HANDOFF.md')) ? fs.readFileSync(path.join(planDir, 'HANDOFF.md'), 'utf8') : '';
+  const recent = handoff.split(/^(?=## Plan )/m).filter((s) => s.startsWith('## Plan ')).slice(-3).map((s) => s.trim().replace(/^## /, '### '));
+  const lines = Object.keys(kept).sort().map((k) => `- **${k}** (plan ${kept[k].plan}): ${kept[k].text}`);
+  fs.writeFileSync(path.join(planDir, 'CONTEXT.md'), `# Context\n\nWritten by the plan runner from each finished plan's report. Read it before you start, and reuse what is listed here instead of writing it again.\n\n## What exists (by area)\n\n${lines.length ? lines.join('\n') : '(nothing yet)'}\n\n## The last ${recent.length} finished plan(s)\n\n${recent.join('\n\n') || '(none yet)'}\n`);
 }
 
 function writeHandoff(plan, ps) {
@@ -821,7 +1053,11 @@ function readEnvFile(p) {
 }
 
 // The commands the runner itself runs (gates, setup) use the normal environment plus the manifest's env.
-function gateEnv() { return { ...process.env, ...ctx.env, PLAN_RUNNER: '1' }; }
+// Secret-looking variables of the user's own shell (exchange, cloud, payment keys ...) are removed, so a project test
+// can never use a real key; the manifest's "pass_env" names exceptions. Sessions get the same exceptions (lib/home.mjs
+// removes the rest).
+function gateEnv() { return { ...scrubSecrets(process.env, { keep: /^PLAN_RUNNER\w*$/, pass: ctx.manifest.pass_env || [] }), ...ctx.env, PLAN_RUNNER: '1' }; }
+function passEnv() { return Object.fromEntries((ctx.manifest.pass_env || []).filter((k) => k in process.env).map((k) => [k, process.env[k]])); }
 
 // ---------- report and status ----------
 function writeReport(outcome) {
@@ -829,7 +1065,12 @@ function writeReport(outcome) {
     const { st, manifest, repos } = ctx;
     const plans = manifest.plans.map((p) => [p, st.plans[p.id] || {}]);
     const L = [];
-    L.push(`# Plan run report: ${slug}`, '', `Result: **${outcome}**`, `Started: ${st.created}`, st.finished ? `Finished: ${st.finished}` : '', `Session isolation: ${st.isolation || 'unknown'}${st.isolation === 'none' ? ' (the session itself was NOT restricted)' : ''}`, st.haltReason ? `\nStopped because:\n\n\`\`\`\n${st.haltReason}\n\`\`\`` : '', '');
+    const pr = progressOf(plans);
+    L.push(`# Plan run report: ${slug}`, '', `Result: **${outcome}**`, `Started: ${st.created}`, st.finished ? `Finished: ${st.finished}` : '', `Session isolation: ${st.isolation || 'unknown'}${st.isolation === 'none' ? ' (the session itself was NOT restricted)' : ''}`,
+      `Progress: ${pr.done} of ${plans.length} plans done. Running for ${fmtDuration(Date.now() - Date.parse(st.created))}.${pr.eta ? ` About ${fmtDuration(pr.eta)} of plan work left (the average so far).` : ''}`,
+      st.haltReason ? `\nStopped because:\n\n\`\`\`\n${st.haltReason}\n\`\`\`` : '', '');
+    if (st.bisect) L.push(`The last failed ${st.bisect.label} first failed after plan **${st.bisect.plan}** (searched plans ${st.bisect.candidates.join(', ')}).`, '');
+    if ((st.archChanges || []).length) L.push(`ARCHITECTURE.md was changed during the run (${st.archChanges.join(', ')}). Plans finished before that were built on the old version.`, '');
 
     const dev = plans.flatMap(([p, s]) => (s.deviations || []).map((d) => `- **Plan ${p.id}, step ${d.step}:** ${d.what}\n  Why: ${d.reason}`));
     L.push('## 1. Read this: done differently from the plan', '', dev.length ? `A session can call a skipped task "done differently", so read each one.\n\n${dev.join('\n')}` : 'Nothing. Every step was done the way the plan says.', '');
@@ -843,8 +1084,11 @@ function writeReport(outcome) {
     const weak = plans.filter(([, s]) => (s.weak || []).length).map(([p, s]) => `- Plan ${p.id}: step(s) ${s.weak.join(', ')}`);
     if (weak.length) L.push('## Weak checks (they passed before any work was done)', '', "These checks cannot prove their step was done. Look at those steps' changes yourself.", '', ...weak, '');
 
-    L.push('## Plans', '', '| id | file | status | failed tries | sessions | tool calls | refused |', '|---|---|---|---|---|---|---|');
-    for (const [p, s] of plans) L.push(`| ${p.id} | ${p.file} | ${s.status || 'pending'} | ${s.attempts ?? 0} | ${s.sessions ?? 0} | ${s.turns ?? 0} | ${s.refused ?? 0} |`);
+    const reviews = plans.filter(([, s]) => s.review && s.review !== 'No findings.').map(([p, s]) => `### Plan ${p.id}\n\n${s.review}`);
+    if (reviews.length) L.push('## Plan reviews (findings that did not block)', '', ...reviews, '');
+
+    L.push('## Plans', '', '| id | file | status | time | failed tries | sessions | tool calls | refused |', '|---|---|---|---|---|---|---|---|');
+    for (const [p, s] of plans) L.push(`| ${p.id}${p.repair ? ' (repair)' : ''} | ${p.file} | ${s.adopted ? 'done (earlier run)' : s.status || 'pending'} | ${planTime(s) ? fmtDuration(planTime(s)) : ''} | ${s.attempts ?? 0} | ${s.sessions ?? 0} | ${s.turns ?? 0} | ${s.refused ?? 0} |`);
     const fl = plans.flatMap(([p, s]) => (s.failures || []).map((f) => `- ${f.at} plan ${p.id}, ${stepName(f.step)}${f.try ? `, try ${f.try}` : ''}: ${f.reason}`));
     L.push('', '## Failed tries', '', fl.length ? `Full reasons: \`plans/<id>/failures.log\` in ${toPosix(runDir)}\n\n${fl.join('\n')}` : 'None.', '');
     const refused = plans.flatMap(([p, s]) => (s.refusedLog || []).map((x) => `- plan ${p.id}: ${x}`));
@@ -864,17 +1108,33 @@ function writeReport(outcome) {
     L.push('## Session reports', '');
     for (const [p, s] of plans) if (s.summary) L.push(`### Plan ${p.id}`, '', s.summary, '');
     L.push('## Final security review', '', st.finalReview || '(not run)', '');
-    L.push('## How to continue', '', outcome === 'HALTED' ? `Fix the cause (the plan file, a check or the environment; not the code by hand), then run \`node ${toPosix(path.join(HERE, 'run.mjs'))} run ${slug}\` again. It re-checks the kept steps and goes on from where it stopped. Discarded work is in \`${toPosix(path.join(runDir, 'plans'))}\` as .patch files.` : 'Read sections 1 to 3, review the diff in each repo, then commit it yourself.', '');
+    const again = `node ${toPosix(path.join(HERE, 'run.mjs'))} run ${slug}`;
+    const how = {
+      HALTED: `Fix the cause (the plan file, a check or the environment; not the code by hand), then run \`${again}\` again. It re-checks the kept steps and goes on from where it stopped. A failed full check, end-to-end check or final review is fixed with a repair plan (\`/plan-replan ${slug}\`). Discarded work is in \`${toPosix(path.join(runDir, 'plans'))}\` as .patch files.`,
+      PAUSED: `Milestone review. Look at the app, read sections 1 to 3. If later plans rely on something done differently, run \`/plan-replan ${slug}\`. You may commit the work so far. Then run \`${again}\` to continue.`,
+      RUNNING: 'The run is still going. This report is rewritten after every plan.',
+    };
+    L.push('## How to continue', '', how[outcome] || 'Read sections 1 to 3, review the diff in each repo, then commit it yourself.', '');
     const text = L.filter((x) => x !== undefined).join('\n');
     fs.writeFileSync(path.join(runDir, 'REPORT.md'), text);
     try { fs.writeFileSync(path.join(planDir, 'REPORT.md'), text); } catch { /* ignore */ }
   } catch (e) { log('System', `Could not write the report: ${e.message}`); }
 }
 
+function planTime(s) { return s.startedAt && s.finishedAt && !s.adopted ? Date.parse(s.finishedAt) - Date.parse(s.startedAt) : 0; }
+
+/** Plans done and a rough time left from the average plan so far. (agy reports no cost.) */
+function progressOf(plans) {
+  const done = plans.filter(([, s]) => s.status === 'done').length;
+  const times = plans.map(([, s]) => planTime(s)).filter(Boolean);
+  const eta = times.length ? (times.reduce((a, b) => a + b, 0) / times.length) * (plans.length - done) : 0;
+  return { done, eta };
+}
+
 function printStatus() {
   const st = loadState(runDir);
   if (!st) { console.log(`No run state for "${slug}" in ${runDir}`); return; }
-  console.log(`Run "${slug}": ${st.status}${st.haltReason ? `\n  reason: ${st.haltReason.split('\n')[0]}` : ''}`);
+  console.log(`Run "${slug}": ${st.status}, ${Object.values(st.plans).filter((p) => p.status === 'done').length} plan(s) done${st.haltReason ? `\n  reason: ${st.haltReason.split('\n')[0]}` : ''}`);
   for (const [id, p] of Object.entries(st.plans)) {
     const cps = loadCheckpoints(runDir, id);
     console.log(`  ${id}: ${p.status}  steps checkpointed=${lastOf(cps)} failed tries=${p.attempts ?? 0}${p.tryStep ? ` (${stepName(p.tryStep)}: ${p.tries ?? 0})` : ''} sessions=${p.sessions} tool calls=${p.turns} refused=${p.refused ?? 0}${p.lastFailure ? `\n      last failure: ${p.lastFailure.split('\n')[0]}` : ''}`);

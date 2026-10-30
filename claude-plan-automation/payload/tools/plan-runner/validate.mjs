@@ -135,11 +135,41 @@ export function validateFolder(dir, { workspace } = {}) {
       if (p[k] !== undefined && (!Array.isArray(p[k]) || p[k].some((x) => typeof x !== 'string' || !x.trim()))) err(`"permissions.${k}" must be an array of non-empty strings`);
     }
   }
-  for (const key of ['setup', 'gates_each', 'full_gates']) {
+  for (const key of ['setup', 'reset', 'deps_install', 'gates_each', 'full_gates', 'e2e_gates']) {
     if (m[key] === undefined) continue;
     if (!Array.isArray(m[key])) { err(`"${key}" must be an array`); continue; }
-    m[key].forEach((c, i) => cmdOk(c, `${key}[${i}]`));
+    m[key].forEach((c, i) => cmdOk(c, `${key}[${i}]`, null, { check: key !== 'gates_each' && key !== 'setup' && key !== 'reset' && key !== 'deps_install' }));
   }
+
+  // size: L and XL are whole applications or very large features, so they must carry the locked architecture and the
+  // checks that prove the parts work together (full_gates; e2e_gates for XL), not only each plan's own checks.
+  if (m.size !== undefined && !['S', 'M', 'L', 'XL'].includes(m.size)) err('"size" must be S, M, L or XL');
+  const big = m.size === 'L' || m.size === 'XL';
+  if (big) {
+    if (!fs.existsSync(path.join(dir, 'ARCHITECTURE.md'))) err(`size ${m.size} needs ARCHITECTURE.md in the plan folder (stack, data model, API contracts, auth, conventions); /plan-feature writes it`);
+    if (!Array.isArray(m.full_gates) || !m.full_gates.length) err(`size ${m.size} needs "full_gates" (the whole test suite, typecheck and build), so a later plan cannot silently break an earlier one`);
+    if (!Array.isArray(m.e2e_gates) || !m.e2e_gates.length) (m.size === 'XL' ? err : warn)(`size ${m.size} ${m.size === 'XL' ? 'needs' : 'should have'} "e2e_gates": commands that start the app and run the user journeys from the spec end to end`);
+    if (!Array.isArray(m.pause_after) || !m.pause_after.length) warn(`size ${m.size} has no "pause_after": the run never stops for you to look at the app until it ends`);
+  }
+  for (const key of ['plan_review', 'final_review_blocks', 'bisect']) {
+    if (m[key] !== undefined && typeof m[key] !== 'boolean') err(`"${key}" must be true or false`);
+  }
+  if (m.max_limit_wait_hours !== undefined && !(typeof m.max_limit_wait_hours === 'number' && m.max_limit_wait_hours > 0)) err('"max_limit_wait_hours" must be a positive number');
+  if (m.pass_env !== undefined && (!Array.isArray(m.pass_env) || m.pass_env.some((x) => typeof x !== 'string' || !x))) err('"pass_env" must be an array of variable names');
+  const ids = new Set(m.plans.map((p) => p?.id));
+  if (m.pause_after !== undefined) {
+    if (!Array.isArray(m.pause_after)) err('"pause_after" must be an array of plan ids');
+    else for (const id of m.pause_after) if (!ids.has(id)) err(`"pause_after" names plan "${id}", which does not exist`);
+  }
+  const allRepos = [...new Set(m.plans.flatMap((p) => (Array.isArray(p?.repos) ? p.repos : [])))];
+  const globList = (v, where, roots) => {
+    if (v === undefined) return;
+    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || !x.trim())) { err(`${where} must be an array of globs`); return; }
+    for (const g of v) {
+      if (!roots.some((r) => g.startsWith(`${r}/`))) err(`${where} "${g}" must start with a repo folder (${roots.join(', ')})`);
+      if (/^(\*\*|\*)(\/|$)/.test(g)) err(`${where} "${g}" is too broad`);
+    }
+  };
 
   const seen = new Set();
   const allowedSoFar = [];
@@ -166,6 +196,13 @@ export function validateFolder(dir, { workspace } = {}) {
     if (typeof p.est_turns !== 'number' || p.est_turns <= 0) err(`${w}: est_turns must be a positive number`);
     else if (p.est_turns > 60) warn(`${w}: est_turns ${p.est_turns} is over 60. Split it at a green checkpoint.`);
     if (p.model !== undefined && !['sonnet', 'opus', 'haiku'].includes(p.model)) err(`${w}: model must be sonnet, opus or haiku`);
+    globList(p.freeze, `${w}: freeze`, repos);
+    globList(p.unfreeze, `${w}: unfreeze`, allRepos);
+    for (const k of ['repair', 'review']) if (p[k] !== undefined && typeof p[k] !== 'boolean') err(`${w}: "${k}" must be true or false`);
+    if (p.epic !== undefined && typeof p.epic !== 'string') err(`${w}: "epic" must be a string`);
+    if (big && !p.repair && !p.freeze && Array.isArray(p.allowed_paths) && p.allowed_paths.some((a) => /(^|\/)(tests?|spec|__tests__|e2e)(\/|$)|\.(test|spec)\./i.test(a))) {
+      warn(`${w}: it writes tests but has no "freeze", so a later plan could weaken them unnoticed`);
+    }
 
     // steps
     if (!Array.isArray(p.steps) || p.steps.length === 0) err(`${w}: steps must be a non-empty array`);

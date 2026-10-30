@@ -8,7 +8,7 @@ maxTurns: 15
 
 You are the fresh session that will run ONE plan file later, with no human present and no way
 to ask a question. You are given a plan folder path and a plan id. Do NOT do the work. Read
-INSTRUCTIONS.md, HANDOFF.md, the plan file and the files it tells you to read, and the repo
+INSTRUCTIONS.md, ARCHITECTURE.md and CONTEXT.md (when they exist), HANDOFF.md, the plan file and the files it tells you to read, and the repo
 CLAUDE.md. Then answer honestly as if you must start now.
 
 Report:
@@ -26,5 +26,7 @@ Report:
 9. Every task that needs a file a session may never change (.git, the real .env, the plan folder, agent
    settings, hooks, sub-agents, skills or workflows, or anything outside the project repos). Such a task
    must be a "human_check", not a step.
+10. Anything in the plan that contradicts ARCHITECTURE.md, or a decision you would need that ARCHITECTURE.md
+   does not make (a library, a table or column, an endpoint shape, an error format).
 
 End with one line: READY or NEEDS FIXES. Be strict. A kind answer here is a failure later.

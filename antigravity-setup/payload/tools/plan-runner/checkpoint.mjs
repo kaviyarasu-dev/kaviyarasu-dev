@@ -27,9 +27,9 @@ const cur = {};
 for (const [name, dir] of Object.entries(S.repos)) cur[name] = snapshot(dir, idx(name));
 
 const changed = changedPaths(S.repos, S.startTrees, cur);
-const sc = scopeCheck({ changed, allowed: S.allowed, extra: S.extra, planDirRel: S.planDirRel, primaryName: S.primaryName });
+const sc = scopeCheck({ changed, allowed: S.allowed, extra: S.extra, planDirRel: S.planDirRel, primaryName: S.primaryName, frozen: S.frozen || [], unfreeze: S.unfreeze || [] });
 if (!sc.ok) {
-  console.log(`CHECKPOINT REFUSED: blocked files were changed (git, secrets, agent settings or the plan folder):\n${sc.violations.join('\n')}\nRevert those changes, then run the checkpoint again.`);
+  console.log(`CHECKPOINT REFUSED: blocked files were changed (git, secrets, agent settings, the plan folder or a frozen test):\n${sc.violations.join('\n')}\nRevert those changes, then run the checkpoint again.`);
   process.exit(1);
 }
 

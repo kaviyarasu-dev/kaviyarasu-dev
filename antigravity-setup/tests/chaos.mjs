@@ -619,6 +619,109 @@ await t('S23 the session gets the report schema (--json-schema) and the guard kn
   c(rules.scope && rules.scope.roots.length === 1 && /docs[\\/]plans[\\/]feat$/.test(rules.scope.planDir), JSON.stringify(rules.scope));
 });
 
+// ---------- large runs: recovery, whole-app checks, reviews, context (same cases as the Claude runner's L tests) ----------
+const editManifest = (w, fn) => { const p = path.join(w.dir, 'manifest.json'); const m = JSON.parse(fs.readFileSync(p, 'utf8')); fn(m); fs.writeFileSync(p, JSON.stringify(m, null, 2)); };
+const editFake = (w, fn) => { const c = JSON.parse(fs.readFileSync(w.cfg, 'utf8')); fn(c); fs.writeFileSync(w.cfg, JSON.stringify(c)); };
+
+await t('L01 full check fails: the search names the plan that broke it; a repair plan fixes it and the run finishes', async (c) => {
+  const w = build('l01', { every: 3, manifest: { full_gates: ['node check.js a'] }, cfg: { '003': { modes: ['break_a'] } } });
+  const r = await runRunner(w);
+  c(r.code === 1 && state(w).status === 'halted', `exit ${r.code}\n${r.out.slice(-800)}`);
+  c(/first fails after plan 003/.test(r.out), 'the search did not name plan 003');
+  c(/REPAIR plan/.test(r.out), 'no repair hint');
+  c(fs.readFileSync(path.join(w.app, 'src', 'a.js'), 'utf8').includes('=>0'), 'the files were not put back as they were after the search');
+  const r2 = await runRunner(w);
+  c(r2.code === 1 && /full check failed/.test(r2.out), `rerun without a fix: exit ${r2.code}`);
+  editManifest(w, (m) => m.plans.push({ id: '003r', file: '003r-fix.md', repos: ['toyapp'], repair: true, depends_on: [], allowed_paths: ['toyapp/src/a.js'], verify: ['node check.js a'], est_turns: 5, steps: [{ n: 1, title: 'fix a', verify: ['node check.js a'] }] }));
+  fs.writeFileSync(path.join(w.dir, '003r-fix.md'), planMd('003r', [{ n: 1, title: 'fix a' }]));
+  editFake(w, (f) => { f['003r'] = { modes: ['ok'], files: [['toyapp/src/a.js', GOOD]] }; });
+  const r3 = await runRunner(w);
+  c(r3.code === 0 && state(w).status === 'complete', `after the repair plan: exit ${r3.code}\n${r3.out.slice(-800)}`);
+});
+
+await t('L02 a finished plan\'s frozen test cannot be changed by a later plan', async (c) => {
+  const w = build('l02', { cfg: { '003': { modes: ['weaken'] } } });
+  editManifest(w, (m) => { m.plans[0].freeze = ['toyapp/a.test.js']; });
+  fs.writeFileSync(path.join(w.app, 'a.test.js'), 'real test');
+  sh(w.app, ['add', '-A']); sh(w.app, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'test']);
+  const r = await runRunner(w);
+  c(r.code === 1 && state(w).plans['003'].status === 'failed', `exit ${r.code}`);
+  c(/frozen by plan 001/.test(r.out), 'no frozen message');
+  c(fs.readFileSync(path.join(w.app, 'a.test.js'), 'utf8') === 'real test', 'the frozen test was not restored');
+});
+
+await t('L03 plan review: a "fail" is a failed try with the problems as the reason; the next try passes', async (c) => {
+  const w = build('l03', { manifest: { plan_review: true } });
+  editFake(w, (f) => { f.review = { modes: ['fail', 'pass'] }; });
+  const r = await runRunner(w);
+  c(r.code === 0 && state(w).status === 'complete', `exit ${r.code}\n${r.out.slice(-800)}`);
+  c(state(w).plans['001'].attempts === 1, `attempts ${state(w).plans['001'].attempts}`);
+  c(/PLAN REVIEW: a read-only reviewer/.test(fs.readFileSync(`${w.cfg}.prompts.log`, 'utf8')), 'the retry did not get the review problems');
+  const reviewArgs = argLog(w).filter((a) => a.guardFiles.length && a.argv.includes('--json-schema') && a.argv.some((x) => /review-schema\.json$/.test(x)));
+  c(reviewArgs.length >= 1, 'the reviewer did not get the review schema');
+});
+
+await t('L05 blocking final review halts; running again repeats it and completes when it passes', async (c) => {
+  const w = build('l05', { manifest: { final_review_blocks: true } });
+  editFake(w, (f) => { f.finalReview = { modes: ['fail', 'pass'] }; });
+  const r = await runRunner(w);
+  c(r.code === 1 && /final review found 1 critical or high/.test(r.out), `exit ${r.code}\n${r.out.slice(-600)}`);
+  const r2 = await runRunner(w);
+  c(r2.code === 0 && state(w).status === 'complete', `second run: exit ${r2.code}`);
+});
+
+await t('L06 milestone: pauses after the named plan (exit 0), continues on the next start', async (c) => {
+  const w = build('l06', { manifest: { pause_after: ['001'], e2e_gates: ['node check.js a'] } });
+  const r = await runRunner(w);
+  c(r.code === 0 && state(w).status === 'paused', `exit ${r.code} status ${state(w).status}`);
+  c(!state(w).plans['002'], 'plan 002 started before the pause');
+  const r2 = await runRunner(w);
+  c(r2.code === 0 && state(w).status === 'complete', `second run: exit ${r2.code}`);
+});
+
+await t('L08 reset commands run before every session and every whole-app check', async (c) => {
+  const w = build('l08');
+  const logf = path.join(w.ws, 'reset.log');
+  editManifest(w, (m) => { m.env = { RESET_LOG: logf }; m.reset = ['node -e "require(\'fs\').appendFileSync(process.env.RESET_LOG,\'x\')"']; m.full_gates = ['node check.js a']; });
+  const r = await runRunner(w);
+  c(r.code === 0, `exit ${r.code}\n${r.out.slice(-600)}`);
+  const n = has(logf) ? fs.readFileSync(logf, 'utf8').length : 0;
+  c(n >= 7, `reset ran ${n} time(s), expected at least 7`);
+});
+
+await t('L09 context: ARCHITECTURE.md and CONTEXT.md are read first; a session\'s context entries reach CONTEXT.md', async (c) => {
+  const w = build('l09', { cfg: { '001': { context: [{ key: 'helper: add', text: 'toyapp/src/a.js exports add(a,b)' }] } } });
+  fs.writeFileSync(path.join(w.dir, 'ARCHITECTURE.md'), '# Architecture\nNode only.\n');
+  const r = await runRunner(w);
+  c(r.code === 0, `exit ${r.code}`);
+  c(/\*\*helper: add\*\* \(plan 001\)/.test(fs.readFileSync(path.join(w.dir, 'CONTEXT.md'), 'utf8')), 'context entry missing from CONTEXT.md');
+  const p3 = fs.readFileSync(`${w.cfg}.prompts.log`, 'utf8').split('=== plan ').find((p) => p.startsWith('003'));
+  c(/ARCHITECTURE\.md is locked/.test(p3) && /CONTEXT\.md/.test(p3), 'plan 003 prompt does not point at ARCHITECTURE.md and CONTEXT.md');
+});
+
+await t('L10 --from: the plans before it count as done and never start', async (c) => {
+  const w = build('l10');
+  const r = await runRunner(w, ['--from', '002']);
+  c(r.code === 0 && state(w).status === 'complete', `exit ${r.code}\n${r.out.slice(-500)}`);
+  c(state(w).plans['001'].adopted && !has(`${w.cfg}.cnt.001`), 'plan 001 ran');
+});
+
+await t('L11 usage limit: waiting longer than max_limit_wait_hours since this start halts', async (c) => {
+  const w = build('l11', { manifest: { max_limit_wait_hours: 0.0000001 }, cfg: { '001': { modes: ['quota', 'ok'] } } });
+  const r = await runRunner(w);
+  c(r.code === 1 && /max_limit_wait_hours/.test(r.out), `exit ${r.code}\n${r.out.slice(-500)}`);
+});
+
+await t('L12 secret-looking variables reach neither the session nor the checks; pass_env lets one through', async (c) => {
+  const w = build('l12', { manifest: { gates_each: ['node -e "process.exit(process.env.FAKE_SECRET_API_KEY ? 1 : 0)"'] } });
+  const r = await runRunner(w, [], { FAKE_SECRET_API_KEY: 'real-exchange-key' });
+  c(r.code === 0, `exit ${r.code}\n${r.out.slice(-500)}`);
+  c(!/secret=leaked/.test(fs.readFileSync(`${w.cfg}.prompts.log`, 'utf8')), 'the session saw the secret');
+  const w2 = build('l12b', { manifest: { pass_env: ['FAKE_SECRET_API_KEY'] } });
+  await runRunner(w2, [], { FAKE_SECRET_API_KEY: 'needed' });
+  c(/secret=leaked/.test(fs.readFileSync(`${w2.cfg}.prompts.log`, 'utf8')), 'pass_env did not let the variable through');
+});
+
 const LIMIT = Number(process.env.CHAOS_PAR || 5);
 let qi = 0;
 await Promise.all(Array.from({ length: LIMIT }, async () => { while (qi < queue.length) await queue[qi++](); }));

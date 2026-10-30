@@ -24,7 +24,7 @@ The command can also be written with a name: add `claude` after the URL for this
 | Path | What |
 |---|---|
 | `tools/plan-runner/` | The unattended runner (`run.mjs`, `validate.mjs`, `checkpoint.mjs`, `config/permissions.json`) |
-| `skills/plan-feature`, `skills/plan-split`, `skills/grill-me`, `skills/goal` | The `/plan-feature`, `/plan-split`, `/grill-me` and `/goal` commands |
+| `skills/plan-research`, `skills/plan-feature`, `skills/plan-split`, `skills/plan-replan`, `skills/grill-me`, `skills/goal` | The `/plan-research`, `/plan-feature`, `/plan-split`, `/plan-replan`, `/grill-me` and `/goal` commands |
 | `agents/plan-*.md`, `agents/requirements-reviewer.md` | Fresh-eyes reviewers used by the skills |
 | `hooks/planning-context.sh` | Reminds Claude to re-read the planning files after a chat is compacted |
 | `settings.json` | One `SessionStart` hook is added. Nothing else in the file changes. |
@@ -36,6 +36,8 @@ It does not touch your model, plugins, permissions, history, projects or MCP set
 1. In Claude Code, inside your project: `/plan-feature <idea>`, then `/clear`, then `/plan-split <slug>`.
 2. In a separate terminal, in the project folder: `node $HOME/.claude/tools/plan-runner/run.mjs run <slug>` (use `$HOME`, not `~`: PowerShell does not expand `~` when it starts node).
 3. Read `$HOME/.claude/plan-runs/<repo>__<slug>/REPORT.md`, sections 1 to 3 first (done differently from the plan, changed outside the plan, needs a person). If it stopped, fix the cause in the plan file or the environment (not the code by hand) and run the same command again: steps that passed are kept and re-checked.
+
+**A whole application or a very large feature** (days of work, 30 to 100 plans): start with `/plan-research <product>` (web research of the domain, you pick the scope), then `/clear` and `/plan-feature <slug>`, which also writes a locked `ARCHITECTURE.md`. The runner then pauses at each milestone for you to look at the app; when it pauses or stops on a whole-app check, run `/plan-replan <slug>`. See "Large runs" in the [runner README](payload/tools/plan-runner/README.md).
 
 No step can be skipped: every step must be checkpointed, every step's check runs again at the end, and each session must report what it did not do (anything not done stops the run). Each step gets 3 tries, and every failed try is saved in full in `plans/<id>/failures.log`.
 

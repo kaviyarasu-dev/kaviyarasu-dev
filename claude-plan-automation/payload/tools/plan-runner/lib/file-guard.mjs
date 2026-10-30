@@ -2,7 +2,8 @@
 // Claude's deny rules cannot say "everything in .claude/ except rules/" or ".env.* but not .env.example", and they
 // cannot say "nothing outside the project". This hook can. It reads the tool call as JSON on stdin and the run's
 // session file (PLAN_RUNNER_SESSION, written by run.mjs) for the project repos.
-//   Write/Edit/MultiEdit/NotebookEdit: refused outside the project repos (the temp folder is allowed) and on blocked files.
+//   Write/Edit/MultiEdit/NotebookEdit: refused outside the project repos (the temp folder is allowed), on blocked files
+//   and on files a finished plan froze (its tests and test config).
 //   Read: refused on secret files.
 // A refusal is exit code 2 with the reason on stderr; Claude shows that reason to the session.
 // Fail closed: if anything goes wrong, the call is refused.
@@ -10,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { blockedReason, ENV_EXAMPLES } from './gates.mjs';
+import { blockedReason, ENV_EXAMPLES, frozenBy } from './gates.mjs';
 import { matchesAny } from './util.mjs';
 
 const WRITE = /^(?:Write|Edit|MultiEdit|NotebookEdit)$/;
@@ -48,7 +49,9 @@ export function decideFile(call, S) {
   }
   const rel = `${repo[0]}/${path.relative(repo[1], abs).split(path.sep).join('/')}`;
   const why = blockedReason(rel, { planDirRel: S.planDirRel, primaryName: S.primaryName });
-  return why ? { decision: 'deny', reason: `${rel}: ${why}` } : { decision: 'allow' };
+  if (why) return { decision: 'deny', reason: `${rel}: ${why}` };
+  const by = frozenBy(rel, S.frozen || [], S.unfreeze || []);
+  return by ? { decision: 'deny', reason: `${rel} is frozen by plan ${by} (a finished plan's tests and test config may not change)` } : { decision: 'allow' };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

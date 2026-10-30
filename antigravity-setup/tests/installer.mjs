@@ -33,7 +33,7 @@ const CLAUDE_FILES = payloadCount(path.join(REPO, 'claude-plan-automation', 'pay
   const c = fresh('claude');
   let r = run(ROUTER, ['--local'], { CLAUDE_CONFIG_DIR: c });
   ok('router with no name installs the Claude setup', r.code === 0 && r.out.includes(`${CLAUDE_FILES} added, 0 updated, 0 unchanged`), r.out.slice(-400));
-  ok('Claude: 19 files installed', CLAUDE_FILES === 19 && walk(c).filter((f) => !f.startsWith('backups/') && f !== 'settings.json' && f !== '.plan-automation.json').length === 19);
+  ok(`Claude: all ${CLAUDE_FILES} payload files installed`, walk(c).filter((f) => !f.startsWith('backups/') && f !== 'settings.json' && f !== '.plan-automation.json').length === CLAUDE_FILES);
   ok('Claude: the version is printed', r.out.includes(`v${VERSION}`));
   r = run(ROUTER, ['--local'], { CLAUDE_CONFIG_DIR: c });
   ok('Claude: second run reports everything unchanged', r.code === 0 && r.out.includes(`0 added, 0 updated, ${CLAUDE_FILES} unchanged`), r.out.slice(-300));
@@ -52,7 +52,7 @@ const cfgA = path.join(A, 'config');
   let r = run(ROUTER, ['antigravity', '--local'], { AGY_GEMINI_DIR: A });
   ok('antigravity: fresh install', r.code === 0 && r.out.includes(`${AGY_FILES} added, 0 updated, 0 unchanged`), r.out.slice(-500));
   ok('antigravity: the version is printed', r.out.includes(`v${VERSION}`));
-  for (const f of ['config/skills/plan-feature/SKILL.md', 'config/skills/plan-split/SKILL.md', 'config/skills/grill-me/SKILL.md', 'config/agents/requirements-reviewer.md', 'config/agents/plan-cold-reader.md', 'config/agents/plan-auditor.md',
+  for (const f of ['config/skills/plan-feature/SKILL.md', 'config/skills/plan-split/SKILL.md', 'config/skills/grill-me/SKILL.md', 'config/skills/plan-research/SKILL.md', 'config/skills/plan-replan/SKILL.md', 'config/agents/requirements-reviewer.md', 'config/agents/plan-cold-reader.md', 'config/agents/plan-auditor.md',
     'config/scripts/planning-context.mjs', 'tools/plan-runner/run.mjs', 'tools/plan-runner/validate.mjs', 'tools/plan-runner/checkpoint.mjs', 'tools/plan-runner/assert.mjs', 'tools/plan-runner/lib/guard.mjs', 'tools/plan-runner/config/permissions.json']) {
     ok(`antigravity: installed ${f}`, fs.existsSync(path.join(A, f)));
   }
@@ -155,7 +155,7 @@ const cfgB = path.join(B, 'config');
 
   const C2 = fresh('clone-claude');
   r = run(CLAUDE_INSTALL, [], { CLAUDE_CONFIG_DIR: C2, KAVIYARASU_REPO_URL: url });
-  ok('clone: the Claude installer still clones and installs 19 files', r.code === 0 && r.out.includes(`${CLAUDE_FILES} added`), r.out.slice(-400));
+  ok('clone: the Claude installer still clones and installs every payload file', r.code === 0 && r.out.includes(`${CLAUDE_FILES} added`), r.out.slice(-400));
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

@@ -85,14 +85,27 @@ export function blockedReason(p, { planDirRel, primaryName }) {
   return null;
 }
 
-export function scopeCheck({ changed, allowed, extra = [], planDirRel, primaryName }) {
+/**
+ * Frozen files: the tests and test config a finished plan listed under "freeze". A later plan may not change them
+ * (a session could otherwise weaken a test to make its own work pass) unless it names them under "unfreeze".
+ * frozen: [{ glob, by }]. Returns the plan id that froze p, or null.
+ */
+export function frozenBy(p, frozen = [], unfreeze = []) {
+  if (!frozen.length || matchesAny(unfreeze, p)) return null;
+  const hit = frozen.find((f) => matchesAny([f.glob], p));
+  return hit ? hit.by : null;
+}
+
+export function scopeCheck({ changed, allowed, extra = [], planDirRel, primaryName, frozen = [], unfreeze = [] }) {
   const allow = [...allowed, ...extra, ...DEP_FILES.map((f) => `**/${f}`)];
   const violations = [];
   const outside = [];
   for (const p of changed) {
     if (p === `${primaryName}/${planDirRel}/BLOCKED.md`) continue;
     const why = blockedReason(p, { planDirRel, primaryName });
+    const by = why ? null : frozenBy(p, frozen, unfreeze);
     if (why) violations.push(`${p}  (${why})`);
+    else if (by) violations.push(`${p}  (frozen by plan ${by}: a finished plan's tests and test config may not change; a plan that must change it lists it under "unfreeze")`);
     else if (!matchesAny(allow, p)) outside.push(p);
   }
   return { ok: violations.length === 0, violations, outside };

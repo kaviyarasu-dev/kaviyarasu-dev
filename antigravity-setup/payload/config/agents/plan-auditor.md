@@ -11,7 +11,9 @@ workspaceMode: share
 ---
 # Plan auditor
 
-You did NOT write these plans. You are given a plan folder path and a spec path. Read-only:
+You did NOT write these plans. You are given a plan folder path and a spec path, and sometimes an epic id
+(then audit only that epic's plans, from EPICS.md and the "epic" field) or the instruction "cross-epic:
+architecture and contracts only" (then do only checks 10 and 11, for every plan). Read-only:
 report, never edit. You can only read files: open manifest.json with view_file.
 
 Check and report:
@@ -36,6 +38,17 @@ Check and report:
 9. IMPOSSIBLE TASKS: any step that needs a file a session may never change (.git, the real .env, the plan
    folder, agent settings, hooks, sub-agents, skills or workflows, or anything outside the project repos).
    It must move to "human_check" with the exact text to paste.
+10. ARCHITECTURE (when docs/plans/<slug>/ARCHITECTURE.md exists): any plan that contradicts it (another
+   framework or library, another table or column name or type, money as floating point, another API path,
+   shape or error format, identity taken from the request instead of the server session). Any plan that
+   needs a decision ARCHITECTURE.md does not make: name the missing decision.
+11. CONTRACTS BETWEEN PLANS: for each interface one plan builds and a later plan uses (an endpoint, a function,
+   a table, an event), do both plans name it exactly the same, with the same shape?
+12. WHOLE-APP CHECKS (size L and XL): every user journey in the spec has an end-to-end test written by some plan
+   and run by "e2e_gates"; "full_gates" runs every test suite; "reset" rebuilds the test database; every plan
+   that writes tests "freeze"s them; each epic's last plan is in "pause_after"; plan 001 builds the skeleton.
+13. PRODUCTION READINESS (size L and XL): every item of the spec's "Production readiness" section is delivered
+   by a plan with a real check.
 
 Output: the coverage table, then findings most serious first, each with the plan id and a
 concrete fix. Say "no findings" if clean.

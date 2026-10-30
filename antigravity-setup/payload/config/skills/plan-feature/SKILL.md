@@ -1,6 +1,6 @@
 ---
 name: plan-feature
-description: Interview the user about a feature and write a reviewed spec to disk. Phase 1 of 2. Writes no code. Use ONLY when the user explicitly types /plan-feature. Never start it on your own.
+description: Interview the user about a feature (or a whole application) and write a reviewed spec, and for large work a locked ARCHITECTURE.md, to disk. Phase 1 of 2 (2 of 3 after /plan-research). Writes no code. Use ONLY when the user explicitly types /plan-feature. Never start it on your own.
 ---
 
 You are the PLANNER for one feature. Do NOT write application code. Do NOT commit.
@@ -21,10 +21,15 @@ RULES FOR THIS SESSION
 - Follow the project rules (GEMINI.md, AGENTS.md, CLAUDE.md, .agents/rules, .claude/rules) and any rules in them about how to work.
 
 STEP 0 - Set up
-Make a short kebab-case slug. Folder: docs/plans/<slug>/_planning/. If it already has
-STATE.md, this is a RESUME: read STATE.md and requirements.md, say where we are, continue.
-Otherwise create STATE.md (phase: interview) and requirements.md with these headings:
-Code findings, Decisions, Assumptions, Out of scope, Open questions.
+Make a short kebab-case slug (if the feature text is the slug of an existing docs/plans/<slug>/ folder, use it).
+Folder: docs/plans/<slug>/_planning/.
+- If STATE.md says phase: research-approved, /plan-research ran first: read research.md. Its "Scope" section is
+  settled: every IN feature is a requirement, every R1, R2 ... is a decision, LATER and OUT go under "Out of
+  scope". Copy them into requirements.md (as decisions, with the feature ids) and never ask them again.
+  Set phase: interview.
+- Else if STATE.md exists, this is a RESUME: read STATE.md and requirements.md, say where we are, continue.
+- Otherwise create STATE.md (phase: interview).
+requirements.md has these headings: Code findings, Decisions, Assumptions, Out of scope, Open questions.
 
 STEP 1 - Read the code first (keep it lean)
 Read the project rules (see above) in every repo of this workspace (the working directory and
@@ -33,13 +38,18 @@ else docs/specs), and the code that relates to this feature. Check the deployed 
 (master, main, staging), not only the current branch. Use grep_search and find_by_name for wide
 searches and read only what you need, so file dumps stay out of this chat. Write what you
 learned under "Code findings", with file paths.
+If there is no application code yet (a new project), write "Greenfield: no code yet" under "Code findings":
+then nothing can be "decided from code", and the stack, structure and conventions must all be decided in
+the interview (see STEP 3).
 
 STEP 2 - Size, then budget
-Say whether this is S, M or L, with reasons (repos touched, screens, tables, API actions,
-roles, risky steps). Ask the user to confirm in ONE question. Budgets: S = 6 questions,
-M = 15, L = 30. A batch is at most 4 questions. Count them. At 80% of the budget say so.
+Say whether this is S, M, L or XL, with reasons (repos touched, screens, tables, API actions,
+roles, risky steps). XL is a whole application, or work of more than about 15 plan files (for example
+"build a trading website with all standard features"). Ask the user to confirm in ONE question. Budgets: S = 6 questions,
+M = 15, L = 30, XL = 45 (questions already settled in research.md do not count and are not asked).
+A batch is at most 4 questions. Count them. At 80% of the budget say so.
 At the budget, stop asking and turn every remaining unknown into a logged assumption.
-Write "Size: S|M|L" and your turn estimate to STATE.md. The plan layout follows from it (see the
+Write "Size: S|M|L|XL" and your turn estimate to STATE.md. The plan layout follows from it (see the
 FILE SPLITTING RULE below). Do not ask about the layout; it is a rule, not a choice.
 
 FILE SPLITTING RULE (the later /plan-split follows it too)
@@ -48,7 +58,8 @@ of thousands of tokens of fixed overhead. So do NOT split small work into many f
 - S and M features: ONE plan file, by default.
 - Split only when (a) the estimate is over about 60 turns, or (b) a step is irreversible or has an
   external side effect (a database migration, a call to a third-party API). That step becomes its
-  own part. L features always split.
+  own part. L and XL always split. XL is split into epics (groups of plans that together deliver one
+  area, each ending with a milestone where the runner pauses for the user).
 - Every split point must be a green checkpoint: the earlier part passes its own verify command,
   and each part stands alone (its own goal and verify command, no reliance on chat memory).
 - Inside one file the work is divided into numbered steps. Each step has its own check, and the
@@ -68,6 +79,13 @@ For each area you will NOT ask, write "N/A: reason" in requirements.md. Show the
 once, in one line per area, so it can be vetoed.
 Security and privacy, Data, and Migration and deploy are NEVER skipped when touched,
 even if the user says "skip".
+For L and XL these are ALWAYS asked (never N/A), because every plan will be built on them and a session
+cannot change them later: Tech stack (languages, framework, database, versions), Structure (repos, folders,
+modules), Data model (main tables and ids, money and time types), API contracts (style, versioning, error
+format, pagination), Auth (who logs in how, sessions or tokens, roles, where identity comes from), Real-time
+(if anything updates live: how), Background jobs, Observability (logging, metrics, alerting), Environments and
+deploy (local, test, production; CI), Testing (unit, integration and end-to-end tools, and the command that runs
+each). Decide from code where code exists; for a new project recommend a default and ask for confirmation.
 
 STEP 4 - Interview
 - Ask only what the code cannot answer AND what changes the design. If the answer is in the
@@ -96,9 +114,34 @@ something is still open after that, log it as an assumption and tell the user.
 
 STEP 7 - Spec
 Write the spec to the project's specs folder as YYYY-MM-DD-<slug>-design.md, in the style of the
-existing specs there. Build it ONLY from requirements.md. Add no new facts. Ask the user to approve it
-and fix what is pointed out.
+existing specs there (docs/specs if there is none). Build it ONLY from requirements.md (and research.md).
+Add no new facts. For L and XL it must have these sections: Goal, Scope (with the research feature ids),
+Requirements (one block per feature, each with acceptance criteria a machine can check), User journeys
+(the end-to-end paths a real user takes, step by step, for example "sign up, verify identity, deposit, place
+a limit order, see it fill, withdraw"; each becomes an automated end-to-end test), Production readiness (logging,
+monitoring, rate limits, audit log, backups, CI and deploy, secrets), Human checks, Assumptions (HIGH-RISK first).
+Ask the user to approve it and fix what is pointed out.
+
+STEP 7b - Architecture (L and XL: required; S and M: skip)
+Write docs/plans/<slug>/ARCHITECTURE.md from the decisions only (add no new facts). Every plan session reads it
+first and must follow it, and it is the only place these decisions live, so be exact. Sections:
+1. Stack: languages, frameworks, database, key libraries, with versions.
+2. Structure: repos, folders and modules, and what goes where. Naming conventions.
+3. Data model: every main table with its key columns and types (money and prices as exact decimals or integer
+   minor units, never floating point; times in UTC), and how migrations are made and run.
+4. API contracts: style, base path and versioning, request and response shape, the one error format, auth
+   header, pagination, and the list of endpoints or messages with their shapes (or the path of the contract
+   file, for example an OpenAPI file that plan 001 writes from this section).
+5. Auth and authorization: who logs in how, sessions or tokens, roles and what each may do, where identity comes
+   from (always the server session, never the request body).
+6. Real-time, background jobs and external services: how each works and how it is faked in tests.
+7. Cross-cutting rules: logging format, configuration and secrets (env names only), error handling, validation,
+   rate limits, audit log, idempotency of money movements.
+8. Testing: the unit, integration and end-to-end commands, where tests live, how the test database is created and
+   reset (this becomes the manifest "setup" and "reset"), and how the app is started for end-to-end tests.
+9. Environments and deploy: local, test, production; the CI workflow; health checks.
+Ask the user to approve it and fix what is pointed out.
 
 STEP 8 - Finish
-Set STATE.md: phase: spec-approved (lower-case, on its own line), with the spec path. Tell the user exactly:
+Set STATE.md: phase: spec-approved (lower-case, on its own line), with the spec path, "Size: S|M|L|XL" and (L and XL) the ARCHITECTURE.md path. Tell the user exactly:
 "Start a fresh agy session, then run /plan-split <slug>". Stop. Do not create plan files in this session.

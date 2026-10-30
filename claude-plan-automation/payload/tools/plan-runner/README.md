@@ -38,6 +38,43 @@ for any work that was rolled back.
 
 Other behaviour: a usage-limit hit waits for the reset and retries without using a try; a session silent for `idle_min` or running past `timeout_min` is killed with its child processes; a session over 1.5x its `est_turns` is stopped at the next green checkpoint and continued in a fresh one; every `full_gates_every` plans and at the end the `full_gates` run; at the end a read-only security review of the whole diff is written into the report; Windows is kept awake; a toast and the log tell you when it stops or finishes.
 
+## Large runs: a whole application (size L and XL)
+
+For work too big for one session (a full application, 30 to 100 plans over days) the planning has one more phase
+and the manifest more fields. In Claude Code:
+
+1. `/plan-research <product>`: researches the domain on the web (comparable products, every feature a complete
+   product has, domain rules, regulations, vendors, production needs, all with links) and lets you pick the scope.
+   Writes `_planning/research.md`.
+2. `/plan-feature <slug>`: takes the scope from research.md, interviews you on the rest (stack, data model, API,
+   auth, real-time, testing and deploy are always asked for L and XL), writes the spec with user journeys and a
+   production-readiness section, and writes **`ARCHITECTURE.md`** in the plan folder: the locked decisions.
+3. `/plan-split <slug>`: writes the plans epic by epic (progress kept in STATE.md and EPICS.md, so a compacted chat
+   can go on), plan 001 builds the skeleton, each epic ends with a milestone, the last epic is production readiness.
+4. The runner, then `/plan-replan <slug>` whenever it pauses at a milestone or stops on a whole-app check.
+
+What the runner does for these runs (all manifest fields are optional; the validator requires some for L and XL):
+
+| Field or flag | What it does |
+|---|---|
+| `ARCHITECTURE.md` (plan folder) | Read first by every session, which must follow it. Required for L and XL. A change during the run is noted in the report. |
+| `CONTEXT.md` (written by the runner) | A short map of what earlier plans built (modules, interfaces, helpers, conventions), from each session's `context` entries, plus the last 3 handoffs. Sessions read it instead of the ever-growing HANDOFF.md, which they only search. |
+| `size` | `S`, `M`, `L` or `XL`. L and XL need ARCHITECTURE.md and `full_gates`; XL also needs `e2e_gates`. |
+| `reset` | Commands run before every session, every pre-check and every whole-app check: they rebuild the throwaway test database from the current files, so a rolled-back try leaves no migrations or rows behind. A failing reset halts the run. |
+| `deps_install` | Run after a rollback changed a package or lock file, so installed packages match the files again. |
+| `e2e_gates` | The app end to end (start it, run the user-journey tests). At every milestone and at the end. A failure halts the run and is repeated on the next start before any other plan. |
+| `pause_after` | Plan ids (the end of each epic). After that plan: the full and end-to-end checks, then the run **pauses** (exit 0, `Result: PAUSED`) so you can look at the app. The next start continues. |
+| plan `freeze` / `unfreeze` | Files (tests, test config) that no later plan may change once this plan is done. A change is refused by the checkpoint and the scope gate and the file guard. A later plan that must change one lists it under `unfreeze`. |
+| `plan_review` (default on for L and XL) | After a plan passes its checks, a separate read-only reviewer reads its diff against the plan, ARCHITECTURE.md and CONTEXT.md: tests that would pass on wrong code, stubs, contradictions, security. A critical or high problem is a failed try with the problems as the reason. A review that gives no answer twice is noted in the report and does not block. |
+| `final_review_blocks` (default on for L and XL) | The final review's critical or high findings halt the run. |
+| plan `repair: true` | A plan written after a failed full or end-to-end check or final review (`/plan-replan` writes it). Repair plans run before the failed check is repeated. |
+| `bisect` (default on) | When the full check fails, the runner puts the files back to each plan's finished state in turn (a binary search over the plans since the last green check) and names the first plan after which it fails. The files are always put back. |
+| `max_limit_wait_hours` | The longest single usage-limit wait (the reset time is known). Default 168. A new start begins a new budget. |
+| `pass_env` | Variable names that may pass through. Every other secret-looking variable of your shell (`*_API_KEY`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*` ...) is removed from sessions and checks, so a test can never use a real exchange, cloud or payment key. Put throwaway test values in `env`. |
+| `--from <plan id>` | A fresh run (`--reset`, clean repos) that counts the plans before it as done, for work committed from an earlier run. |
+
+`REPORT.md` is now rewritten after every plan (`Result: RUNNING`), with progress, elapsed time, a rough time left, the cost so far, a time and cost per plan, and the plan reviews' findings that did not block.
+
 ## No step is skipped
 
 - **Every step must be checkpointed.** A session that ends with steps left is not done. If it moved forward, a fresh session goes on from the next step (no try used). If it did not move forward, that is a failed try.
@@ -89,7 +126,7 @@ Exit 0 = passed, 1 = the check failed, 2 = the command itself is wrong (bad usag
 
 ## Known limits
 
-- Rollback restores files only. It cannot undo database changes (that is why runs use a throwaway database), and it cannot remove packages an install added to `node_modules` (re-run `npm install` after a failed run).
+- Rollback restores files only. Database changes are undone only by the manifest's `reset` commands, and installed packages only by `deps_install` (without them, re-run `npm install` after a failed run).
 - Ignored files (`.env`, `node_modules`) are never snapshotted or touched.
 - On this machine each git call takes about 2 seconds (Windows process-start cost), so expect a minute or two of snapshot overhead per plan.
 - Shell commands cannot be fenced in on Windows. The file guard covers Write/Edit; a shell command could still write outside the project. The runner notices it only in another git repo next to the project.

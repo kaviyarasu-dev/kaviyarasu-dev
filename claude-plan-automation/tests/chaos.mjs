@@ -74,9 +74,9 @@ function build(name, opts = {}) {
 }
 
 const envFor = (w) => ({ ...process.env, PLAN_RUNNER_CLAUDE_CMD: JSON.stringify(['node', FAKE]), FAKE_CFG: w.cfg, PLAN_RUNNER_HOME: w.home, PLAN_RUNNER_QUIET: '1', PLAN_RUNNER_FAST: '1' });
-function runRunner(w, extra = []) {
+function runRunner(w, extra = [], env = {}) {
   return new Promise((resolve) => {
-    const child = spawn('node', [RUN, 'run', 'feat', '--repo', w.app, ...extra], { env: envFor(w), windowsHide: true });
+    const child = spawn('node', [RUN, 'run', 'feat', '--repo', w.app, ...extra], { env: { ...envFor(w), ...env }, windowsHide: true });
     let out = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
@@ -541,6 +541,154 @@ await t('S23 the session gets the file guard (--settings) and the report schema 
   const schema = JSON.parse(args[args.indexOf('--json-schema') + 1]);
   c(/file-guard\.mjs/.test(settings.hooks.PreToolUse[0].hooks[0].command), 'no file guard hook');
   c(schema.required.includes('not_done'), 'no report schema');
+});
+
+// ---------- large runs: recovery, whole-app checks, reviews, context ----------
+const editManifest = (w, fn) => { const p = path.join(w.dir, 'manifest.json'); const m = JSON.parse(fs.readFileSync(p, 'utf8')); fn(m); fs.writeFileSync(p, JSON.stringify(m, null, 2)); };
+const editFake = (w, fn) => { const c = JSON.parse(fs.readFileSync(w.cfg, 'utf8')); fn(c); fs.writeFileSync(w.cfg, JSON.stringify(c)); };
+
+await t('L01 full check fails: the search names the plan that broke it; a repair plan fixes it and the run finishes', async (c) => {
+  const w = build('l01', { every: 3, manifest: { full_gates: ['node check.js a'] }, cfg: { '003': { modes: ['break_a'] } } });
+  const r = await runRunner(w);
+  c(r.code === 1 && state(w).status === 'halted', `exit ${r.code}\n${r.out.slice(-800)}`);
+  c(/first fails after plan 003/.test(r.out), 'the search did not name plan 003');
+  c(/REPAIR plan/.test(r.out), 'no repair hint');
+  c(fs.readFileSync(path.join(w.app, 'src', 'a.js'), 'utf8').includes('=>0'), 'the files were not put back as they were after the search');
+  // the same command again without a fix halts again (the check runs first), and does not loop
+  const r2 = await runRunner(w);
+  c(r2.code === 1 && /full check failed before|full check failed after/.test(r2.out), `rerun without a fix: exit ${r2.code}`);
+  editManifest(w, (m) => m.plans.push({ id: '003r', file: '003r-fix.md', repos: ['toyapp'], repair: true, depends_on: [], allowed_paths: ['toyapp/src/a.js'], verify: ['node check.js a'], est_turns: 5, steps: [{ n: 1, title: 'fix a', verify: ['node check.js a'] }] }));
+  fs.writeFileSync(path.join(w.dir, '003r-fix.md'), planMd('003r', [{ n: 1, title: 'fix a' }]));
+  editFake(w, (f) => { f['003r'] = { modes: ['ok'], files: [['toyapp/src/a.js', GOOD]] }; });
+  const r3 = await runRunner(w);
+  c(r3.code === 0 && state(w).status === 'complete', `after the repair plan: exit ${r3.code}\n${r3.out.slice(-800)}`);
+  c(state(w).plans['003r']?.status === 'done', 'repair plan not done');
+});
+
+await t('L02 a finished plan\'s frozen test cannot be changed by a later plan', async (c) => {
+  const w = build('l02', { cfg: { '003': { modes: ['weaken'] } } });
+  editManifest(w, (m) => { m.plans[0].freeze = ['toyapp/a.test.js']; });
+  fs.writeFileSync(path.join(w.app, 'a.test.js'), 'real test');
+  sh(w.app, ['add', '-A']); sh(w.app, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'test']);
+  const r = await runRunner(w);
+  c(r.code === 1 && state(w).plans['003'].status === 'failed', `exit ${r.code}`);
+  c(/frozen by plan 001/.test(r.out), 'no frozen message');
+  c(fs.readFileSync(path.join(w.app, 'a.test.js'), 'utf8') === 'real test', 'the frozen test was not restored');
+  const S = { repos: { toyapp: w.app }, planDirRel: 'docs/plans/feat', primaryName: 'toyapp', frozen: [{ glob: 'toyapp/a.test.js', by: '001' }], unfreeze: [] };
+  c(decideFile({ tool_name: 'Edit', tool_input: { file_path: path.join(w.app, 'a.test.js') } }, S).decision === 'deny', 'file guard let a frozen file be edited');
+  c(decideFile({ tool_name: 'Edit', tool_input: { file_path: path.join(w.app, 'a.test.js') } }, { ...S, unfreeze: ['toyapp/a.test.js'] }).decision === 'allow', 'unfreeze ignored');
+});
+
+await t('L03 plan review: a "fail" is a failed try with the problems as the reason; the next try passes', async (c) => {
+  const w = build('l03', { manifest: { plan_review: true }, cfg: {} });
+  editFake(w, (f) => { f.review = { modes: ['fail', 'pass'] }; });
+  const r = await runRunner(w);
+  c(r.code === 0 && state(w).status === 'complete', `exit ${r.code}\n${r.out.slice(-800)}`);
+  c(state(w).plans['001'].attempts === 1, `attempts ${state(w).plans['001'].attempts}`);
+  const prompts = fs.readFileSync(`${w.cfg}.prompts.log`, 'utf8');
+  c(/PLAN REVIEW: a read-only reviewer/.test(prompts) && /only checks that add exists/.test(prompts), 'the retry did not get the review problems');
+  c(/Plan reviews \(findings that did not block\)/.test(fs.readFileSync(path.join(w.runDir, 'REPORT.md'), 'utf8')), 'minor findings not in the report');
+  const reviews = fs.readFileSync(`${w.cfg}.reviews.log`, 'utf8');
+  c(/\.patch/.test(reviews) && /Plan file:/.test(reviews), 'the reviewer did not get the diff and the plan');
+});
+
+await t('L04 plan review that gives no answer twice: the plan still passes on its checks, and the report says so', async (c) => {
+  const w = build('l04', { manifest: { plan_review: true } });
+  editFake(w, (f) => { f.review = { modes: ['garbage'] }; });
+  const r = await runRunner(w);
+  c(r.code === 0, `exit ${r.code}`);
+  c(/did not finish/.test(state(w).plans['001'].review || ''), 'no note that the review did not finish');
+});
+
+await t('L05 blocking final review halts; running again repeats it and completes when it passes', async (c) => {
+  const w = build('l05', { manifest: { final_review_blocks: true } });
+  editFake(w, (f) => { f.finalReview = { modes: ['fail', 'pass'] }; });
+  const r = await runRunner(w);
+  c(r.code === 1 && /final review found 1 critical or high/.test(r.out), `exit ${r.code}\n${r.out.slice(-600)}`);
+  const r2 = await runRunner(w);
+  c(r2.code === 0 && state(w).status === 'complete', `second run: exit ${r2.code}`);
+});
+
+await t('L06 milestone: pauses after the named plan (exit 0), continues on the next start, never pauses twice', async (c) => {
+  const w = build('l06', { manifest: { pause_after: ['001'], e2e_gates: ['node check.js a'] } });
+  const r = await runRunner(w);
+  c(r.code === 0 && state(w).status === 'paused', `exit ${r.code} status ${state(w).status}`);
+  c(!state(w).plans['002'], 'plan 002 started before the pause');
+  c(/End-to-end check at milestone 001/.test(r.out), 'no end-to-end check at the milestone');
+  c(/Result: \*\*PAUSED\*\*/.test(fs.readFileSync(path.join(w.runDir, 'REPORT.md'), 'utf8')), 'report does not say PAUSED');
+  const r2 = await runRunner(w);
+  c(r2.code === 0 && state(w).status === 'complete', `second run: exit ${r2.code}`);
+});
+
+await t('L07 end-to-end check failing at the end halts; it is repeated on the next start', async (c) => {
+  const w = build('l07', { manifest: { e2e_gates: ['node -e "process.exit(1)"'] } });
+  const r = await runRunner(w);
+  c(r.code === 1 && /end-to-end check failed at the end/.test(r.out), `exit ${r.code}`);
+  c(['001', '002', '003'].every((id) => state(w).plans[id].status === 'done'), 'plans not done');
+  const r2 = await runRunner(w);
+  c(r2.code === 1 && /end-to-end check failed/.test(r2.out), 'not repeated on the next start');
+});
+
+await t('L08 reset commands run before every session and every whole-app check', async (c) => {
+  const w = build('l08', {});
+  const logf = path.join(w.ws, 'reset.log');
+  editManifest(w, (m) => { m.env = { RESET_LOG: logf }; m.reset = ['node -e "require(\'fs\').appendFileSync(process.env.RESET_LOG,\'x\')"']; m.full_gates = ['node check.js a']; });
+  const r = await runRunner(w);
+  c(r.code === 0, `exit ${r.code}\n${r.out.slice(-600)}`);
+  const n = has(logf) ? fs.readFileSync(logf, 'utf8').length : 0;
+  c(n >= 7, `reset ran ${n} time(s), expected at least 7 (3 pre-checks, 3 sessions, 1 full check)`);
+});
+
+await t('L09 context: ARCHITECTURE.md and CONTEXT.md are read first; a session\'s context entries reach CONTEXT.md', async (c) => {
+  const w = build('l09', { cfg: { '001': { context: [{ key: 'helper: add', text: 'toyapp/src/a.js exports add(a,b)' }] } } });
+  fs.writeFileSync(path.join(w.dir, 'ARCHITECTURE.md'), '# Architecture\nNode only.\n');
+  const r = await runRunner(w);
+  c(r.code === 0, `exit ${r.code}`);
+  const ctxMd = fs.readFileSync(path.join(w.dir, 'CONTEXT.md'), 'utf8');
+  c(/\*\*helper: add\*\* \(plan 001\)/.test(ctxMd), 'context entry missing from CONTEXT.md');
+  c(/### Plan 003/.test(ctxMd), 'recent handoff missing from CONTEXT.md');
+  const prompts = fs.readFileSync(`${w.cfg}.prompts.log`, 'utf8').split('=== plan ');
+  const p3 = prompts.find((p) => p.startsWith('003'));
+  c(/ARCHITECTURE\.md/.test(p3) && /CONTEXT\.md/.test(p3) && /ARCHITECTURE\.md is locked/.test(p3), 'plan 003 prompt does not point at ARCHITECTURE.md and CONTEXT.md');
+  c(/search it \(Grep\)/.test(p3), 'HANDOFF.md not marked as search-only');
+});
+
+await t('L10 --from: the plans before it count as done and never start', async (c) => {
+  const w = build('l10');
+  const r = await runRunner(w, ['--from', '002']);
+  c(r.code === 0 && state(w).status === 'complete', `exit ${r.code}\n${r.out.slice(-500)}`);
+  c(state(w).plans['001'].adopted && !has(`${w.cfg}.cnt.001`), 'plan 001 ran');
+  const r2 = await runRunner(w, ['--from', '002']);
+  c(r2.code === 2, `--from on an existing run should refuse, exit ${r2.code}`);
+});
+
+await t('L11 usage-limit waits: one wait longer than max_limit_wait_hours halts', async (c) => {
+  const w = build('l11', { manifest: { max_limit_wait_hours: 0.0000001 }, cfg: { '001': { modes: ['limit', 'ok'] } } });
+  const r = await runRunner(w);
+  c(r.code === 1 && /longer than max_limit_wait_hours/.test(r.out), `exit ${r.code}`);
+});
+
+await t('L12 secret-looking variables from your shell reach neither the session nor the checks; pass_env lets one through', async (c) => {
+  const w = build('l12', { manifest: { gates_each: ['node -e "process.exit(process.env.FAKE_SECRET_API_KEY ? 1 : 0)"'] } });
+  const r = await runRunner(w, [], { FAKE_SECRET_API_KEY: 'real-exchange-key' });
+  c(r.code === 0, `exit ${r.code}\n${r.out.slice(-500)}`);
+  c(!/secret=leaked/.test(fs.readFileSync(`${w.cfg}.prompts.log`, 'utf8')), 'the session saw the secret');
+  const w2 = build('l12b', { manifest: { pass_env: ['FAKE_SECRET_API_KEY'] } });
+  await runRunner(w2, [], { FAKE_SECRET_API_KEY: 'needed' });
+  c(/secret=leaked/.test(fs.readFileSync(`${w2.cfg}.prompts.log`, 'utf8')), 'pass_env did not let the variable through');
+});
+
+await t('L13 validator: size L/XL needs ARCHITECTURE.md, full_gates and (XL) e2e_gates; freeze, pause_after and new fields are checked', async (c) => {
+  const w = build('l13', { manifest: { size: 'XL', pause_after: ['999'], plan_review: 'yes' } });
+  editManifest(w, (m) => { m.plans[0].freeze = ['otherrepo/x/**']; m.plans[1].repair = 1; });
+  const text = validateFolder(w.dir, { workspace: w.ws }).errors.join('\n');
+  for (const needle of ['needs ARCHITECTURE.md', 'needs "full_gates"', 'needs "e2e_gates"', 'names plan "999"', '"plan_review" must be', 'freeze "otherrepo/x/**" must start', '"repair" must be']) {
+    c(text.includes(needle), `validator missed: ${needle}`);
+  }
+  fs.writeFileSync(path.join(w.dir, 'ARCHITECTURE.md'), '# A\n');
+  editManifest(w, (m) => { m.full_gates = ['node check.js a']; m.e2e_gates = ['node check.js a']; m.pause_after = ['001']; m.plan_review = true; m.plans[0].freeze = ['toyapp/a.test.js']; delete m.plans[1].repair; });
+  const v = validateFolder(w.dir, { workspace: w.ws });
+  c(!v.errors.length, `a correct XL manifest has errors: ${v.errors.join('; ')}`);
 });
 
 const LIMIT = Number(process.env.CHAOS_PAR || 5);

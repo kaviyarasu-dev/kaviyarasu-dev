@@ -76,7 +76,20 @@ export function matchesAny(globs, file) {
   return globs.some((g) => globToRegExp(g.replace(/\\/g, '/')).test(f));
 }
 
-export const tail = (s, n = 3000) => (s.length > n ? `...${s.slice(-n)}` : s);
+// Names that look like secrets. Used to keep the user's own keys (exchange, cloud, payment ...) away from sessions and checks.
+const SECRET_NAME = /(?:token|secret|passw(?:or)?d|credential|private[_-]?key|api[_-]?key|access[_-]?key|auth)/i;
+
+/** env without secret-looking variables, except those matching keep (a RegExp) or named in pass (a list of names). */
+export function scrubEnv(env, { keep = null, pass = [] } = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (SECRET_NAME.test(k) && !(keep && keep.test(k)) && !pass.includes(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+export const tail =(s, n = 3000) => (s.length > n ? `...${s.slice(-n)}` : s);
 
 export function fmtDuration(ms) {
   const s = Math.round(ms / 1000);

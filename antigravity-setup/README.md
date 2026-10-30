@@ -11,7 +11,7 @@ npx --yes https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main antigrav
 ```
 
 - Check first: add `--dry-run`. Remove everything it added: add `--uninstall`. Update: run the same command again.
-- It installs into `~/.gemini` (or the folder in `AGY_GEMINI_DIR`): skills `plan-feature`, `plan-split`, `grill-me`; agents `requirements-reviewer`, `plan-cold-reader`, `plan-auditor`; the runner in `tools/plan-runner/`; one hook entry in `config/hooks.json`. It backs up any file it would overwrite, and removes the known files of the first, hand-copied Antigravity setup. It does not touch your history, projects, auth, models, MCP servers, plugins or settings.
+- It installs into `~/.gemini` (or the folder in `AGY_GEMINI_DIR`): skills `plan-research`, `plan-feature`, `plan-split`, `plan-replan`, `grill-me`; agents `requirements-reviewer`, `plan-cold-reader`, `plan-auditor`; the runner in `tools/plan-runner/`; one hook entry in `config/hooks.json`. It backs up any file it would overwrite, and removes the known files of the first, hand-copied Antigravity setup. It does not touch your history, projects, auth, models, MCP servers, plugins or settings.
 - The Claude Code version of the same command: `npx --yes https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main claude` (or no name at all, as before).
 - Use the HTTPS tarball URL, never `github:owner/repo` (npm fetches that over SSH and hangs without a key). The installer clones the repo over HTTPS itself, because npx keeps an old copy of a URL it has already run.
 
@@ -21,6 +21,8 @@ npx --yes https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main antigrav
 2. Start a fresh agy session, then `/plan-split <slug>`: plan files, a validated manifest, fresh-eyes review.
 3. In a **separate terminal**, from the main repo: `node $HOME/.gemini/tools/plan-runner/run.mjs run <slug>` (use `$HOME`, not `~`: PowerShell does not expand `~` when it starts node).
 4. Read `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md`, sections 1 to 3 first (done differently from the plan, changed outside the plan, needs a person). If it stopped, fix the cause in the plan file or the environment (not the code by hand) and run the same command again: steps that passed are kept and re-checked.
+
+**A whole application or a very large feature** (days of work, 30 to 100 plans): start with `/plan-research <product>` (web research of the domain, you pick the scope), then a fresh session and `/plan-feature <slug>`, which also writes a locked `ARCHITECTURE.md`. The runner then pauses at each milestone for you to look at the app; when it pauses or stops on a whole-app check, run `/plan-replan <slug>`. See "Large runs" in the [runner README](payload/tools/plan-runner/README.md).
 
 No step can be skipped: every step must be checkpointed, every step's check runs again at the end, and each session must report what it did not do (anything not done stops the run). Each step gets 3 tries, and every failed try is saved in full in `plans/<id>/failures.log`.
 
@@ -38,7 +40,7 @@ Details: [GUIDE.md](GUIDE.md) (step by step), [payload/tools/plan-runner/README.
 
 ```
 payload/             what the installer copies into ~/.gemini
-  config/skills/     plan-feature, plan-split, grill-me
+  config/skills/     plan-research, plan-feature, plan-split, plan-replan, grill-me
   config/agents/     requirements-reviewer, plan-cold-reader, plan-auditor
   config/scripts/    planning-context.mjs (a PreInvocation reminder while a feature is being planned)
   tools/plan-runner/ run.mjs, validate.mjs, checkpoint.mjs, assert.mjs, lib/, config/
