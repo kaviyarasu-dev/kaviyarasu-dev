@@ -1,54 +1,78 @@
 # Claude plan automation
 
-Plan a feature with Claude Code, then let it build the feature unattended, one plan file at a time, with checks after every step.
+Plan a feature with Claude Code. Then let a runner build it by itself, one plan file at a time, with a check after every step. It never commits and never pushes.
 
-## Install or update (one command)
+```
+ 💬 Claude chat: plan it   ───►   🖥️ Terminal: runner builds it   ───►   YOU: check and commit
+```
 
-Needs Node 20+, Git, and Claude Code. On Windows, Git for Windows (Git Bash) is also needed.
+## Docs
+
+| File | What is inside |
+|---|---|
+| [GUIDE.md](GUIDE.md) | Easy step by step guide with pictures. Start here. |
+| [payload/tools/plan-runner/README.md](payload/tools/plan-runner/README.md) | What the runner does, its safety rules, big runs, limits. (After install, it is also at `$HOME/.claude/tools/plan-runner/README.md`.) |
+| [../antigravity-setup/README.md](../antigravity-setup/README.md) | The same setup for Antigravity (`agy`) |
+
+## Install or update
+
+You need: Node 20+, Git and Claude Code. On Windows you also need Git for Windows (it has Git Bash).
 
 ```
 npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main
 ```
 
-Run the same command again to update. The installer always downloads the newest files from GitHub itself (npx keeps old copies of a URL, so it cannot be trusted to do that). Other options:
+| To do this | Add this |
+|---|---|
+| Update | Run the same command again |
+| See what would change (writes nothing) | `--dry-run` |
+| Remove what the installer added | `--uninstall` |
+| Pick a setup | `claude` (this one, the default) or `antigravity`, right after the URL |
 
-```
-npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main --dry-run     # show what would change, write nothing
-npx --yes --prefer-online https://github.com/kaviyarasu-dev/kaviyarasu-dev/tarball/main --uninstall   # remove what the installer added
-```
+The command always downloads the newest files from GitHub itself, because npx keeps old copies of a URL.
 
-The command can also be written with a name: add `claude` after the URL for this setup, or `antigravity` for the Antigravity (agy) version in [`../antigravity-setup/`](../antigravity-setup/README.md). With no name it installs this one, exactly as before.
+## What it installs
 
-## What it installs (into `~/.claude`, or `$CLAUDE_CONFIG_DIR`)
+It copies files into `~/.claude` (or `$CLAUDE_CONFIG_DIR`):
 
 | Path | What |
 |---|---|
-| `tools/plan-runner/` | The unattended runner (`run.mjs`, `validate.mjs`, `checkpoint.mjs`, `config/permissions.json`) |
-| `skills/plan-audit`, `skills/plan-research`, `skills/plan-feature`, `skills/plan-split`, `skills/plan-replan`, `skills/grill-me`, `skills/goal` | The `/plan-audit`, `/plan-research`, `/plan-feature`, `/plan-split`, `/plan-replan`, `/grill-me` and `/goal` commands |
-| `agents/plan-*.md`, `agents/requirements-reviewer.md` | Fresh-eyes reviewers used by the skills, and `plan-module-auditor`, the read-only subagent `/plan-audit` starts once per module |
-| `hooks/planning-context.sh` | Reminds Claude to re-read the planning files after a chat is compacted |
-| `settings.json` | One `SessionStart` hook is added. Nothing else in the file changes. |
+| `tools/plan-runner/` | The runner that builds the plans, and the plan checker |
+| `skills/` | The commands `/plan-audit`, `/plan-research`, `/plan-feature`, `/plan-split`, `/plan-replan`, `/grill-me`, `/goal` |
+| `agents/` | Helpers that review the work with fresh eyes, and `plan-module-auditor` (used by `/plan-audit`) |
+| `hooks/planning-context.sh` | After a chat is compacted, it reminds Claude to read the planning files again |
+| `settings.json` | One `SessionStart` hook is added. Nothing else in this file changes. |
 
-It does not touch your model, plugins, permissions, history, projects or MCP settings. Any file it would overwrite is first copied to `~/.claude/backups/plan-automation-<time>/`. The installer is safe to run many times.
+It does not touch your model, plugins, permissions, history, projects or MCP settings. Before it overwrites a file, it saves a copy in `~/.claude/backups/plan-automation-<time>/`.
 
-## Use
+## Use in short
 
-1. In Claude Code, inside your project: `/plan-feature <idea>`, then `/clear`, then `/plan-split <slug>`.
-2. In a separate terminal, in the project folder: `node $HOME/.claude/tools/plan-runner/run.mjs run <slug>` (use `$HOME`, not `~`: PowerShell does not expand `~` when it starts node).
-3. Read `$HOME/.claude/plan-runs/<repo>__<slug>/REPORT.md`, sections 1 to 3 first (done differently from the plan, changed outside the plan, needs a person). If it stopped, fix the cause in the plan file or the environment (not the code by hand) and run the same command again: steps that passed are kept and re-checked.
+| I want... | Start with |
+|---|---|
+| A whole new application | `/plan-research <product>` |
+| To check an existing project and build what is missing | `/plan-audit <project>` |
+| One feature | `/plan-feature <idea>` |
+| A small job, in the current chat | `/goal <what to finish and how we will know it is done>` |
 
-**A project that already has code**: start with `/plan-audit <project>`. It lists the modules, has one read-only subagent audit each (feature gaps: done, half done, missing; security problems; performance problems), and merges the reports into `docs/plans/<slug>/_planning/AUDIT.md`: every finding has `file:line` evidence, a severity and a fix, and anything it could not prove is marked "not checked". It reads code only (it runs nothing, never opens secret files, writes no application code) and can be resumed after a `/clear` or a crash. After you approve `AUDIT.md` (STATE.md `phase: audit-approved`), `/clear` and run `/plan-research <slug>`: it reads the audit's gaps and findings, researches only what the code cannot show, and asks you which gaps and findings are in scope. Then `/plan-feature <slug>` and `/plan-split <slug>` as below. For a small change that needs no research, go from `/plan-audit` straight to `/plan-feature <slug>`.
+Then:
 
-**A new application** has nothing to audit: it starts at `/plan-research <product>`.
+```
+/clear  →  /plan-feature <slug> (if you are not there yet)  →  /clear  →  /plan-split <slug>
+```
 
-**A whole application or a very large feature** (days of work, 30 to 100 plans): start with `/plan-research <product>` (web research of the domain, you pick the scope), then `/clear` and `/plan-feature <slug>`, which also writes a locked `ARCHITECTURE.md`. The runner then pauses at each milestone for you to look at the app; when it pauses or stops on a whole-app check, run `/plan-replan <slug>`. See "Large runs" in the [runner README](payload/tools/plan-runner/README.md).
+Then, in a **separate terminal**, in the project folder:
 
-No step can be skipped: every step must be checkpointed, every step's check runs again at the end, and each session must report what it did not do (anything not done stops the run). Each step gets 3 tries, and every failed try is saved in full in `plans/<id>/failures.log`.
+```
+node $HOME/.claude/tools/plan-runner/run.mjs run <slug>
+```
 
-For a smaller job you do not need a plan: `/goal <what to finish and how we will know it is done>` keeps Claude working in the current chat until every check passes (or it is blocked and says why). It is not unattended; use the runner for that.
+- Write `$HOME`, not `~`. PowerShell does not understand `~` here.
+- If it stops, read `$HOME/.claude/plan-runs/<repo>__<slug>/REPORT.md`. Fix the plan file or the environment (not the code by hand). Run the same command again.
 
-The runner never commits or pushes. More detail: [payload/tools/plan-runner/README.md](payload/tools/plan-runner/README.md) (or `$HOME/.claude/tools/plan-runner/README.md`).
+Full steps: [GUIDE.md](GUIDE.md).
 
 ## For the maintainer
 
-The files to ship live in `payload/` and mirror the layout of `~/.claude`. To publish a change, edit the file in `payload/`, raise `version` in the repo-root `package.json`, and push. Everyone gets it the next time they run the command. Do not put secrets, project names or personal settings in `payload/`; this repo is public.
+- The files to ship are in `payload/`. They have the same layout as `~/.claude`.
+- To publish a change: edit the file in `payload/`, raise `version` in the root `package.json`, and push. Everyone gets it the next time they run the command.
+- Do not put secrets, project names or personal settings in `payload/`. This repo is public.
