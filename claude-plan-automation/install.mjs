@@ -137,6 +137,7 @@ function install() {
   say('\nNext: restart Claude Code, then use /plan-feature <idea>, /plan-split <slug>, and run the plan with:');
   say('  node $HOME/.claude/tools/plan-runner/run.mjs run <slug>');
   say('($HOME works in PowerShell and in Git Bash; do not use ~.) Update later by running the same command again.');
+  say('(For a project that already has code, start with /plan-audit <project>; for a whole new application, with /plan-research <product>.)');
 }
 
 function remove() {

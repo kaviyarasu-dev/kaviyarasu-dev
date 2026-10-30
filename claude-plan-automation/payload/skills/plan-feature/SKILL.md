@@ -26,9 +26,13 @@ STEP 0 - Set up
 Make a short kebab-case slug (if the feature text is the slug of an existing docs/plans/<slug>/ folder, use it).
 Folder: docs/plans/<slug>/_planning/.
 - If STATE.md says phase: research-approved, /plan-research ran first: read research.md. Its "Scope" section is
-  settled: every IN feature is a requirement, every R1, R2 ... is a decision, LATER and OUT go under "Out of
-  scope". Copy them into requirements.md (as decisions, with the feature ids) and never ask them again.
+  settled: every IN feature and every IN audit finding id is a requirement, every R1, R2 ... is a decision, LATER and
+  OUT go under "Out of scope". Copy them into requirements.md (as decisions, with the feature ids) and never ask them again.
   Set phase: interview.
+- Else if STATE.md says phase: audit-approved, /plan-audit ran for an existing project and /plan-research was skipped:
+  read AUDIT.md. Nothing in it is decided yet, so ask ONE question (it counts toward the budget): which of its gaps and
+  findings are IN this feature (recommend every CRITICAL and HIGH one). Log the answer as decisions with the finding
+  ids, the rest under "Out of scope". Set phase: interview (keep the other lines of STATE.md, including "Audit:").
 - Else if STATE.md exists, this is a RESUME: read STATE.md and requirements.md, say where we are, continue.
 - Otherwise create STATE.md (phase: interview).
 requirements.md has these headings: Code findings, Decisions, Assumptions, Out of scope, Open questions.
@@ -39,6 +43,9 @@ any additional directories), the project's specs folder (docs/superpowers/specs 
 else docs/specs), and the code that relates to this feature. Check the deployed branches too
 (master, main, staging), not only the current branch. For wide searches use the Explore subagent
 so file dumps stay out of this chat. Write what you learned under "Code findings", with file paths.
+If _planning/AUDIT.md exists, start from it: copy what you rely on into "Code findings" with its id and file:line. The
+audit is a snapshot, so read the cited lines of every item you rely on and write "AUDIT STALE: <id>" for any that
+no longer match the code.
 If there is no application code yet (a new project), write "Greenfield: no code yet" under "Code findings":
 then nothing can be "decided from code", and the stack, structure and conventions must all be decided in
 the interview (see STEP 3).
@@ -116,7 +123,7 @@ open after that, log it as an assumption and tell me.
 STEP 7 - Spec
 Write the spec to the project's specs folder as YYYY-MM-DD-<slug>-design.md, in the style of the
 existing specs there (docs/specs if there is none). Build it ONLY from requirements.md (and research.md).
-Add no new facts. For L and XL it must have these sections: Goal, Scope (with the research feature ids),
+Add no new facts. For L and XL it must have these sections: Goal, Scope (with the research feature ids and the audit finding ids),
 Requirements (one block per feature, each with acceptance criteria a machine can check), User journeys
 (the end-to-end paths a real user takes, step by step, for example "sign up, verify identity, deposit, place
 a limit order, see it fill, withdraw"; each becomes an automated end-to-end test), Production readiness (logging,

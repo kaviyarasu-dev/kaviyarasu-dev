@@ -16,7 +16,17 @@ On a machine that already has the first setup (`plan-runner.js`, the `plan_featu
 
 **Update:** run the same command again. **Remove:** add `--uninstall`.
 
-## 2. Plan a feature
+## 2. Audit an existing project (only when the project already has code)
+
+```
+/plan-audit the shop backend
+```
+
+It lists the modules into `docs/plans/<slug>/_planning/audit/MODULES.md` and asks you to confirm the list. Then one read-only subagent per module reads that module's code and writes `audit/<module>.md`: what is done, half done or missing (feature gaps), security problems and performance problems. Finally the reports are merged into `docs/plans/<slug>/_planning/AUDIT.md`. Every finding has `file:line` evidence, a severity (CRITICAL, HIGH, MEDIUM, LOW) and a fix; whatever could not be proven is listed as "not checked", not guessed. It reads code only: it runs no tests, linters or scanners, opens no secret file (`.env`, keys) and writes no application code.
+
+If the session is interrupted or the context is compacted, start a fresh session and run the same command: progress is on disk (`STATE.md` lists each module as pending, done or failed) and only the unfinished modules are audited again. You review the summary and the CRITICAL and HIGH findings and approve; STATE.md then says `phase: audit-approved`. Next is `/plan-research <slug>` in a fresh session: it reads `AUDIT.md`, researches only what the code cannot show, and asks which gaps and findings are in scope. A small change that needs no research can go straight to `/plan-feature <slug>`, which also reads `AUDIT.md`. A new project has nothing to audit and starts at `/plan-research`.
+
+## 3. Plan a feature
 
 In your project folder, open agy and type:
 
@@ -34,9 +44,9 @@ It writes the plan folder (`manifest.json`, `INSTRUCTIONS.md`, `NNN-name.md`, `H
 
 ### A whole application
 
-For a full application or a very large feature, run `/plan-research <product>` first (it researches the domain on the web and lets you pick the scope), then a fresh session and `/plan-feature <slug>`. For size L and XL it also writes `docs/plans/<slug>/ARCHITECTURE.md`, the locked stack, data model, API contracts and conventions every plan session must follow. `/plan-split` then writes the plans epic by epic, with a milestone at the end of each epic. When the runner pauses at a milestone, or stops because a whole-app check or the final review failed, run `/plan-replan <slug>` in agy: it updates the plans that have not run yet, or writes a repair plan. The manifest fields for these runs are in "Large runs" in the [runner README](payload/tools/plan-runner/README.md).
+For a full application or a very large feature, run `/plan-research <product>` first (it researches the domain on the web and lets you pick the scope; for an existing project it starts from `AUDIT.md`, see section 2), then a fresh session and `/plan-feature <slug>`. For size L and XL it also writes `docs/plans/<slug>/ARCHITECTURE.md`, the locked stack, data model, API contracts and conventions every plan session must follow. `/plan-split` then writes the plans epic by epic, with a milestone at the end of each epic. When the runner pauses at a milestone, or stops because a whole-app check or the final review failed, run `/plan-replan <slug>` in agy: it updates the plans that have not run yet, or writes a repair plan. The manifest fields for these runs are in "Large runs" in the [runner README](payload/tools/plan-runner/README.md).
 
-## 3. Run the plans
+## 4. Run the plans
 
 Every repo in the plan must have no uncommitted changes. Then, in a **separate terminal** (not inside agy), from the main repo:
 
@@ -59,13 +69,13 @@ Useful variations:
 
 Stop with Ctrl+C. The runner rolls the current plan back to its last good step the next time you start it.
 
-## 4. When it stops
+## 5. When it stops
 
 Read `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md` (a copy is also in the plan folder). It starts with what to read first: what was done differently from the plan, files changed outside the plan, and the things only a person can check. Then why it stopped, anything not done, weak checks, every failed try (full reasons in `plans/<id>/failures.log`), which commands the guard refused, which files changed, new dependencies, the session reports and a security review of the whole diff. Fix the cause in the plan file or the environment (not the code by hand) and run the same command again: it keeps the steps that passed, re-checks them and goes on. Work thrown away by a rollback is saved as `.patch` files in the run folder.
 
 The runner never commits. When it finishes, review the diff in each repo and commit it yourself.
 
-## 5. Troubleshooting
+## 6. Troubleshooting
 
 | You see | Why | Do this |
 |---|---|---|
@@ -77,7 +87,7 @@ The runner never commits. When it finishes, review the diff in each repo and com
 | `Usage limit reached. Waiting ...` | quota or credits ran out | leave it: it waits and retries without using a try |
 | the session is "BLOCKED" | it needed something it was not allowed to do, or the plan is unclear | read the reason in the report, fix the plan or the rule, run again |
 
-## 6. Differences from the Claude Code runner
+## 7. Differences from the Claude Code runner
 
 - Same plan folders and manifest. `model: sonnet` and `opus` are mapped to agy models in `tools/plan-runner/config/models.json`.
 - Each session runs in its own throwaway HOME with a generated settings file and a safety hook, because agy has no "refuse instead of ask" flag and no way to skip your own plugins and rules.

@@ -7,7 +7,7 @@ maxTurns: 20
 ---
 
 You did NOT take part in the interview. You are given a feature name and the path of its
-requirements.md. Read it, then check it against the real code and CLAUDE.md. If _planning/research.md exists, read it too: every feature it marks IN must be covered by a requirement.
+requirements.md. Read it, then check it against the real code and CLAUDE.md. If _planning/research.md exists, read it too: every feature it marks IN must be covered by a requirement. If _planning/AUDIT.md exists, read it too: every audit finding the scope marks IN must be covered by a requirement, and check 3 of its file:line citations against the code (report any that no longer match).
 You may use WebSearch and WebFetch to check a domain rule or a regulation the requirements rely on (give the link). Read-only: report,
 never edit. You cannot ask the owner anything; write the question for the parent to ask.
 

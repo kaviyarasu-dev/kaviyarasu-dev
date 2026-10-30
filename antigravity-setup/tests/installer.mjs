@@ -35,12 +35,19 @@ const CLAUDE_FILES = payloadCount(path.join(REPO, 'claude-plan-automation', 'pay
   ok('router with no name installs the Claude setup', r.code === 0 && r.out.includes(`${CLAUDE_FILES} added, 0 updated, 0 unchanged`), r.out.slice(-400));
   ok(`Claude: all ${CLAUDE_FILES} payload files installed`, walk(c).filter((f) => !f.startsWith('backups/') && f !== 'settings.json' && f !== '.plan-automation.json').length === CLAUDE_FILES);
   ok('Claude: the version is printed', r.out.includes(`v${VERSION}`));
+  for (const f of ['skills/plan-audit/SKILL.md', 'agents/plan-module-auditor.md', 'skills/plan-research/SKILL.md', 'skills/plan-feature/SKILL.md', 'hooks/planning-context.sh']) {
+    ok(`Claude: installed ${f}`, fs.existsSync(path.join(c, f)));
+  }
+  ok('Claude: /plan-audit is named in the install output', r.out.includes('/plan-audit'), r.out.slice(-400));
+  const installedAudit = fs.readFileSync(path.join(c, 'skills', 'plan-audit', 'SKILL.md'), 'utf8');
+  ok('Claude: the installed /plan-audit skill is the payload file, with its name and its phase', installedAudit === fs.readFileSync(path.join(REPO, 'claude-plan-automation', 'payload', 'skills', 'plan-audit', 'SKILL.md'), 'utf8') && /^name: plan-audit$/m.test(installedAudit) && installedAudit.includes('phase: audit-approved'));
   r = run(ROUTER, ['--local'], { CLAUDE_CONFIG_DIR: c });
   ok('Claude: second run reports everything unchanged', r.code === 0 && r.out.includes(`0 added, 0 updated, ${CLAUDE_FILES} unchanged`), r.out.slice(-300));
   r = run(ROUTER, ['claude', '--local', '--dry-run'], { CLAUDE_CONFIG_DIR: c });
   ok('router "claude" is the same command (dry run)', r.code === 0 && r.out.includes('[dry run]'));
   r = run(ROUTER, ['--local', '--uninstall'], { CLAUDE_CONFIG_DIR: c });
   ok('Claude uninstall works through the router', r.code === 0 && !fs.existsSync(path.join(c, '.plan-automation.json')), r.out.slice(-300));
+  ok('Claude uninstall removes the /plan-audit skill and its agent', !fs.existsSync(path.join(c, 'skills', 'plan-audit', 'SKILL.md')) && !fs.existsSync(path.join(c, 'agents', 'plan-module-auditor.md')));
   const none = run(ROUTER, ['bogus'], {});
   ok('router: an unknown name is refused', none.code === 2 && /Unknown installer/.test(none.out));
 }
@@ -52,10 +59,13 @@ const cfgA = path.join(A, 'config');
   let r = run(ROUTER, ['antigravity', '--local'], { AGY_GEMINI_DIR: A });
   ok('antigravity: fresh install', r.code === 0 && r.out.includes(`${AGY_FILES} added, 0 updated, 0 unchanged`), r.out.slice(-500));
   ok('antigravity: the version is printed', r.out.includes(`v${VERSION}`));
-  for (const f of ['config/skills/plan-feature/SKILL.md', 'config/skills/plan-split/SKILL.md', 'config/skills/grill-me/SKILL.md', 'config/skills/plan-research/SKILL.md', 'config/skills/plan-replan/SKILL.md', 'config/agents/requirements-reviewer.md', 'config/agents/plan-cold-reader.md', 'config/agents/plan-auditor.md',
+  for (const f of ['config/skills/plan-feature/SKILL.md', 'config/skills/plan-split/SKILL.md', 'config/skills/grill-me/SKILL.md', 'config/skills/plan-research/SKILL.md', 'config/skills/plan-replan/SKILL.md', 'config/skills/plan-audit/SKILL.md', 'config/agents/plan-module-auditor.md', 'config/agents/requirements-reviewer.md', 'config/agents/plan-cold-reader.md', 'config/agents/plan-auditor.md',
     'config/scripts/planning-context.mjs', 'tools/plan-runner/run.mjs', 'tools/plan-runner/validate.mjs', 'tools/plan-runner/checkpoint.mjs', 'tools/plan-runner/assert.mjs', 'tools/plan-runner/lib/guard.mjs', 'tools/plan-runner/config/permissions.json']) {
     ok(`antigravity: installed ${f}`, fs.existsSync(path.join(A, f)));
   }
+  ok('antigravity: /plan-audit is named in the install output', r.out.includes('/plan-audit'), r.out.slice(-400));
+  const agyAudit = fs.readFileSync(path.join(A, 'config', 'skills', 'plan-audit', 'SKILL.md'), 'utf8');
+  ok('antigravity: the installed /plan-audit skill is the payload file, with its name and its phase', agyAudit === fs.readFileSync(path.join(REPO, 'antigravity-setup', 'payload', 'config', 'skills', 'plan-audit', 'SKILL.md'), 'utf8') && /^name: plan-audit$/m.test(agyAudit) && agyAudit.includes('phase: audit-approved'));
   const hooks = JSON.parse(fs.readFileSync(path.join(cfgA, 'hooks.json'), 'utf8'));
   ok('antigravity: hooks.json has the named hook with a relative command', hooks['kaviyarasu-plan-automation']?.PreInvocation?.[0]?.command === 'node scripts/planning-context.mjs');
   ok('antigravity: nothing outside config/ and tools/ was written (no history, projects, auth, models, settings)', walk(A).every((f) => /^(config|tools)\//.test(f) || f === '.plan-automation-antigravity.json'), walk(A).filter((f) => !/^(config|tools)\//.test(f)).join(','));
@@ -107,11 +117,36 @@ const cfgB = path.join(B, 'config');
   ok('uninstall dry run changes nothing', u.code === 0 && fs.existsSync(path.join(B, 'tools', 'plan-runner', 'run.mjs')));
   u = run(ROUTER, ['antigravity', '--local', '--uninstall'], { AGY_GEMINI_DIR: B });
   ok('uninstall: succeeds', u.code === 0, u.out.slice(-400));
-  ok('uninstall: installed files are gone', !fs.existsSync(path.join(B, 'tools')) && !fs.existsSync(path.join(cfgB, 'skills', 'plan-split')) && !fs.existsSync(path.join(B, '.plan-automation-antigravity.json')));
+  ok('uninstall: installed files are gone', !fs.existsSync(path.join(B, 'tools')) && !fs.existsSync(path.join(cfgB, 'skills', 'plan-split')) && !fs.existsSync(path.join(cfgB, 'skills', 'plan-audit')) && !fs.existsSync(path.join(cfgB, 'agents', 'plan-module-auditor.md')) && !fs.existsSync(path.join(B, '.plan-automation-antigravity.json')));
   ok('uninstall: unrelated files are still untouched', Object.entries(mine).every(([f, t]) => fs.readFileSync(path.join(B, f), 'utf8') === t));
   const h2 = JSON.parse(fs.readFileSync(path.join(cfgB, 'hooks.json'), 'utf8'));
   ok('uninstall: only our hook entry was removed from hooks.json', !h2['kaviyarasu-plan-automation'] && h2['my-hook']);
   ok('uninstall: a second uninstall says there is nothing to remove', run(ROUTER, ['antigravity', '--local', '--uninstall'], { AGY_GEMINI_DIR: B }).code === 1);
+}
+
+// ---------- the reminder hooks fire while a project is being audited, and not after /plan-audit is approved ----------
+{
+  const project = fresh('hook-project');
+  const stateFile = path.join(project, 'docs', 'plans', 'shop', '_planning', 'STATE.md');
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  const agyHook = (phase) => {
+    fs.writeFileSync(stateFile, `phase: ${phase}\n`);
+    const r = spawnSync(process.execPath, [path.join(A, 'config', 'scripts', 'planning-context.mjs')], { input: JSON.stringify({ workspacePaths: [project], invocationNum: 1 }), encoding: 'utf8' });
+    return r.stdout;
+  };
+  ok('antigravity hook: phase audit gets the re-read reminder naming the audit files', /re-read .*STATE.md/.test(agyHook('audit')) && agyHook('audit').includes('audit/MODULES.md'), agyHook('audit'));
+  ok('antigravity hook: phase audit-approved is silent', agyHook('audit-approved') === '{}', agyHook('audit-approved'));
+  ok('antigravity hook: phase research still gets the reminder', agyHook('research').includes('injectSteps'));
+  const bash = spawnSync('bash', ['-c', 'echo ok'], { encoding: 'utf8' });
+  if (bash.status === 0) {
+    const claudeHook = (phase) => {
+      fs.writeFileSync(stateFile, `phase: ${phase}\n`);
+      return spawnSync('bash', [path.join(REPO, 'claude-plan-automation', 'payload', 'hooks', 'planning-context.sh')], { env: { ...process.env, CLAUDE_PROJECT_DIR: project.split(path.sep).join('/') }, encoding: 'utf8' }).stdout;
+    };
+    ok('Claude hook: phase audit gets the re-read reminder naming the audit files', /re-read .*STATE.md/.test(claudeHook('audit')) && claudeHook('audit').includes('audit/MODULES.md'), claudeHook('audit'));
+    ok('Claude hook: phase audit-approved is silent', claudeHook('audit-approved') === '', claudeHook('audit-approved'));
+    ok('Claude hook: phase research still gets the reminder', claudeHook('research').includes('re-read'));
+  } else console.log('NOTE bash was not found: the Claude hook checks were skipped.');
 }
 
 // ---------- hooks.json that is not plain JSON is left alone ----------

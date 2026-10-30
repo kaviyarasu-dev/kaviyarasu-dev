@@ -43,10 +43,13 @@ Other behaviour: a usage-limit hit waits for the reset and retries without using
 For work too big for one session (a full application, 30 to 100 plans over days) the planning has one more phase
 and the manifest more fields. In Claude Code:
 
-1. `/plan-research <product>`: researches the domain on the web (comparable products, every feature a complete
+0. For a project that already has code: `/plan-audit <project>` first. One read-only subagent per module audits the code for
+   feature gaps, security problems and performance problems and the reports are merged into `_planning/AUDIT.md`
+   (every finding with file:line evidence, a severity and a fix). STATE.md says `phase: audit-approved` once you approve it.
+1. `/plan-research <product>` (or `<slug>` after an audit, then it reads AUDIT.md): researches the domain on the web (comparable products, every feature a complete
    product has, domain rules, regulations, vendors, production needs, all with links) and lets you pick the scope.
    Writes `_planning/research.md`.
-2. `/plan-feature <slug>`: takes the scope from research.md, interviews you on the rest (stack, data model, API,
+2. `/plan-feature <slug>`: takes the scope from research.md (and AUDIT.md), interviews you on the rest (stack, data model, API,
    auth, real-time, testing and deploy are always asked for L and XL), writes the spec with user journeys and a
    production-readiness section, and writes **`ARCHITECTURE.md`** in the plan folder: the locked decisions.
 3. `/plan-split <slug>`: writes the plans epic by epic (progress kept in STATE.md and EPICS.md, so a compacted chat

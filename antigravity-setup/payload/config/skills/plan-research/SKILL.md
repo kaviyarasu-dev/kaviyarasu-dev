@@ -1,6 +1,6 @@
 ---
 name: plan-research
-description: Research a whole product or domain on the web (what features it needs, rules, vendors, risks) and agree the scope with the user before /plan-feature. Phase 0 of 3, for whole applications and very large features. Writes no code. Use ONLY when the user explicitly types /plan-research. Never start it on your own.
+description: Research a whole product or domain on the web (what features it needs, rules, vendors, risks) and agree the scope with the user before /plan-feature. Phase 0 of 3, for whole applications and very large features. For an existing project it starts from AUDIT.md (/plan-audit). Writes no code. Use ONLY when the user explicitly types /plan-research. Never start it on your own.
 ---
 
 You are the RESEARCHER. Do NOT write application code. Do NOT commit.
@@ -20,18 +20,31 @@ RULES
   is common knowledge you did not check. Never invent a regulation, a limit, a vendor or a price.
 - Laws and regulations: name them and say where they apply, and mark them "needs a lawyer to confirm". Never say
   the product is compliant.
+- With an audit (STEP 0), AUDIT.md is evidence from the code and research.md is evidence from the web. Keep them apart:
+  cite audit items by their ids (for example billing-G1, auth-S2), never restate them as domain facts, and never put a
+  finding into the scope that the audit marked "Dropped" or the owner marked "accepted" in its Owner notes.
 - Use your web search tool and read_url_content for the research. Read only what you need, so raw pages stay out of
   this chat.
 
 STEP 0 - Set up
-Make a short kebab-case slug. Folder: docs/plans/<slug>/_planning/. If STATE.md exists and says phase: research,
-this is a RESUME: read STATE.md and research.md and continue. Otherwise create STATE.md with "phase: research" and
-research.md with the headings of STEP 2.
+Make a short kebab-case slug (if the product text is the slug of an existing docs/plans/<slug>/ folder, use it).
+Folder: docs/plans/<slug>/_planning/.
+- If STATE.md exists and says phase: research, this is a RESUME: read STATE.md and research.md and continue.
+- Else if STATE.md says phase: audit-approved, /plan-audit ran first, for an existing project: read AUDIT.md
+  (Summary, Feature status, Gap list, Security and Performance findings, Not checked, Owner notes). It is the checked
+  record of what the code has today, so what it already shows (stack, existing features, vendors in use) is never
+  researched or asked again. Set phase: research (keep the other lines of STATE.md, including "Audit:") and create
+  research.md with the headings of STEP 2.
+- Else if STATE.md says phase: audit, the audit is not finished: tell the owner to finish /plan-audit <slug> first.
+  Stop.
+- Otherwise (a new project, nothing to audit) create STATE.md with "phase: research" and research.md with the headings
+  of STEP 2.
 
 STEP 1 - Ask the frame (one batch, at most 4 questions, ask_question, recommendation first)
 Only what changes the research: who the users are (retail, professional, both), which countries or regions, what
 kind of product (for trading: crypto, stocks, forex, simulated or real money), and anything already decided (stack,
-vendors, budget). Write the answers to research.md under "Frame" before going on.
+vendors, budget). With an audit, the stack, the existing features and the vendors in use come from AUDIT.md: do not
+ask them. Write the answers to research.md under "Frame" before going on.
 
 STEP 2 - Research (write each section as you finish it)
 research.md sections, in this order:
@@ -41,7 +54,9 @@ research.md sections, in this order:
    accounts and KYC, wallets and deposits, market data, order types and order entry, order book and matching or
    broker routing, portfolio and P&L, risk limits, fees, notifications, reporting and statements, admin and back
    office, support, audit). One line per feature: id (F1, F2 ...), what it does, why it matters, and a priority:
-   MUST (the product is unusable or illegal without it), SHOULD (users expect it), LATER (nice to have).
+   MUST (the product is unusable or illegal without it), SHOULD (users expect it), LATER (nice to have). With an audit, also
+   a status from AUDIT.md with its ids: DONE (keep as is), PARTIAL (finish), MISSING (build) or NOT CHECKED. Add every
+   PARTIAL and MISSING item of the audit's Gap list that the catalog does not contain yet, marked "from audit".
 4. Domain rules: the precise rules the code must follow (for example order types and their exact behaviour, rounding
    and precision of money and prices, settlement, time zones and trading hours, limits). Each with a source.
 5. Compliance and legal: the regulations that apply in the chosen regions (identity checks, anti-money-laundering,
@@ -59,11 +74,15 @@ research.md sections, in this order:
 STEP 3 - Scope with the owner
 Show the feature catalog grouped by area, MUST first. Ask with ask_question (one question per area, several
 choices allowed, at most 4 questions per batch) which features are IN for this build. Recommend all MUST items.
-Then ask the open decisions from section 9 (budget: 8 questions for this step). Write the result to research.md
-under a new section "10. Scope": IN (feature ids), LATER (feature ids), OUT (feature ids), and every decision as
-R1, R2 ... A MUST item the owner leaves out is logged as a HIGH-RISK decision with its consequence in one line.
+Then ask the open decisions from section 9 (budget: 8 questions for this step).
+With an audit, also ask which audit findings are IN: show the CRITICAL and HIGH ones (id and one line each), recommend
+all of them, and put MEDIUM and LOW under LATER unless the owner says otherwise (budget: 4 more questions).
+Write the result to research.md under a new section "10. Scope": IN (feature ids), LATER (feature ids), OUT (feature
+ids), every audit finding id under IN, LATER or OUT, and every decision as R1, R2 ... A MUST item the owner leaves
+out is logged as a HIGH-RISK decision with its consequence in one line.
 
 STEP 4 - Finish
-Set STATE.md: phase: research-approved (lower-case, on its own line). Tell the user exactly: "Start a fresh agy
-session, then run /plan-feature <slug>. It reads research.md, so you will not be asked again what is decided
-there." Stop.
+Set STATE.md: phase: research-approved (lower-case, on its own line; keep the other lines of STATE.md, including
+"Audit:"). Tell the user exactly: "Start a fresh agy
+session, then run /plan-feature <slug>. It reads research.md and AUDIT.md (when there is one), so you will not be asked
+again what is decided there." Stop.

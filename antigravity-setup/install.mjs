@@ -171,6 +171,7 @@ function install() {
   say('\nNext: restart agy, then use /plan-feature <idea> and /plan-split <slug>, and run the plan from a separate terminal:');
   say('  node $HOME/.gemini/tools/plan-runner/run.mjs run <slug>');
   say('($HOME works in PowerShell and in Git Bash; do not use ~.) Update later by running the same install command again.');
+  say('(For a project that already has code, start with /plan-audit <project>; for a whole new application, with /plan-research <product>.)');
 }
 
 function remove() {

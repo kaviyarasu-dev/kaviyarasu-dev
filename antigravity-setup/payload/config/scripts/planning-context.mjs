@@ -1,6 +1,6 @@
 // agy PreInvocation hook (registered in ~/.gemini/config/hooks.json by the installer).
 // Antigravity has no "after the chat was compacted" event, so this runs before model calls instead and stays
-// silent unless a feature is still in the research, interview, review or splitting phase. Then it reminds the agent, now and then,
+// silent unless a feature is still in the audit, research, interview, review or splitting phase. Then it reminds the agent, now and then,
 // that the planning files, not the chat, are the record of every decision.
 // Input (stdin): { workspacePaths, invocationNum, ... }. Output (stdout): { injectSteps: [...] } or {}.
 import fs from 'node:fs';
@@ -26,9 +26,9 @@ try {
       } catch { /* no STATE.md in this folder */ }
     }
   }
-  if (!newest || !/phase:\s*(research|interview|review|splitting)(\s|$)/im.test(fs.readFileSync(newest.f, 'utf8'))) { out({}); process.exit(0); }
+  if (!newest || !/phase:\s*(audit|research|interview|review|splitting)(\s|$)/im.test(fs.readFileSync(newest.f, 'utf8'))) { out({}); process.exit(0); }
   const d = path.dirname(newest.f).split(path.sep).join('/');
-  out({ injectSteps: [{ ephemeralMessage: `A feature is being planned. Before you continue, re-read ${d}/STATE.md and the files it names (research.md, requirements.md, and while splitting EPICS.md and manifest.json). Those files, not the chat, are the record of every decision.` }] });
+  out({ injectSteps: [{ ephemeralMessage: `A feature is being planned (or a project audited). Before you continue, re-read ${d}/STATE.md and the files it names (audit/MODULES.md and the reports in audit/ while auditing, research.md, requirements.md, and while splitting EPICS.md and manifest.json). Those files, not the chat, are the record of every decision.` }] });
 } catch {
   out({}); // a reminder must never block the agent
 }
