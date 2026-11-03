@@ -272,6 +272,8 @@ node $HOME/.gemini/tools/plan-runner/run.mjs run <slug>
 | `run.mjs run <slug> --reset` | Starts again from the beginning (repos must be clean). |
 | `run.mjs run <slug> --reset --from <id>` | Starts again. Plans before `<id>` count as done (their work must be committed). |
 | `run.mjs run <slug> --no-isolation` | Uses your own agy settings. The session is **not restricted**. Use it only if agy cannot start in the throwaway HOME. |
+| `run.mjs run <slug> --model <name>` | Every plan starts on this model. Available names (case-sensitive, from `agy models`): `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`. Aliases: `sonnet`, `opus`, `haiku`. Example: `--model claude-sonnet-4-6`. On a limit it still goes on along the chain after it. |
+| `run.mjs run <slug> --model <name> --no-switch` | Uses only that model. On a limit it waits. |
 | `validate.mjs docs/plans/<slug>` | Checks only the plan folder. |
 
 To stop: press Ctrl+C. The next time you start, the runner rolls the current plan back to its last good step.
@@ -330,7 +332,7 @@ Where is it? `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md`. A copy is also 
 ## How the agy runner is different from the Claude runner
 
 - The plan folder and the manifest are the same. In the manifest, `model: sonnet` and `opus` are mapped to agy models in `tools/plan-runner/config/models.json`.
-- **Model order.** `tools/plan-runner/config/models.json` has a `chain`: Gemini 3.8 Flash (Medium), then Claude Sonnet 4.6, then GPT-OSS 120B. When a model hits its usage limit, the same plan goes on with the next one, and no try is used. The model that ran out rests for 15 minutes (`cooldown_minutes`), so a new plan starts on Gemini again. When all three are out, the runner waits. This works only in the runner. A normal `agy` chat cannot switch by itself: use `/model`.
+- **Model order.** `tools/plan-runner/config/models.json` has a `chain`: `gemini-3.8-flash-medium`, then `claude-sonnet-4-6`, then `gpt-oss-120b-medium`. When a model hits its usage limit, the same plan goes on with the next one, and no try is used. The model that ran out rests for 15 minutes (`cooldown_minutes`), so a new plan starts on `gemini-3.8-flash-medium` again. When all three are out, the runner waits. This works only in the runner. A normal `agy` chat cannot switch by itself: use `/model`. All available models (run `agy models` to check): `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`.
 - The review sessions use `review` in the same file (now `opus`). If that model runs out, they use the chain too.
 - `/grill-me` and `/goal` on Sonnet in a normal chat: start agy with the model, for example `agy --model claude-sonnet-4-6 "/grill-me <topic>"`. The skills are not changed.
 - Each session runs in its own throwaway HOME, with a generated settings file and a safety hook. The reason: agy has no "refuse instead of ask" flag and no way to skip your own plugins and rules.

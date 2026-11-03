@@ -21,6 +21,7 @@ If you installed with `CLAUDE_CONFIG_DIR`, use that folder instead of `$HOME/.cl
 - Resume after a stop or failure: fix the cause (the plan file, a check or the environment; not the code by hand), then run the same command again. Passed steps are kept and re-checked.
 - Start over: add `--reset` (only when the repos are clean).
 - Look without running: `run.mjs status <slug>` or `run.mjs run <slug> --dry-run`.
+- Choose the model: `run.mjs run <slug> --model <name>` (`sonnet` = `claude-sonnet-5-5`, `opus` = `claude-opus-5-5`, `haiku` = `claude-haiku-5-5`, or any exact ID that starts with `claude-`). The names are in `config/models.json`. There is no automatic switch on a usage limit: every Claude model is blocked then, so the runner waits.
 - Check a plan folder only: `node $HOME/.claude/tools/plan-runner/validate.mjs docs/plans/<slug>`.
 
 Everything the run writes is in `$HOME/.claude/plan-runs/<repo>__<slug>/`: `state.json`, `run.log`,
@@ -74,6 +75,7 @@ What the runner does for these runs (all manifest fields are optional; the valid
 | `bisect` (default on) | When the full check fails, the runner puts the files back to each plan's finished state in turn (a binary search over the plans since the last green check) and names the first plan after which it fails. The files are always put back. |
 | `max_limit_wait_hours` | The longest single usage-limit wait (the reset time is known). Default 168. A new start begins a new budget. |
 | `pass_env` | Variable names that may pass through. Every other secret-looking variable of your shell (`*_API_KEY`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*` ...) is removed from sessions and checks, so a test can never use a real exchange, cloud or payment key. Put throwaway test values in `env`. |
+| `--model <name>` | Every plan of this run uses this model instead of the model in the manifest. The review sessions keep their own model (`review` in `config/models.json`, or `review_model` in the manifest). |
 | `--from <plan id>` | A fresh run (`--reset`, clean repos) that counts the plans before it as done, for work committed from an earlier run. |
 
 `REPORT.md` is now rewritten after every plan (`Result: RUNNING`), with progress, elapsed time, a rough time left, the cost so far, a time and cost per plan, and the plan reviews' findings that did not block.

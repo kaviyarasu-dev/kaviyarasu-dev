@@ -691,6 +691,56 @@ await t('L13 validator: size L/XL needs ARCHITECTURE.md, full_gates and (XL) e2e
   c(!v.errors.length, `a correct XL manifest has errors: ${v.errors.join('; ')}`);
 });
 
+const modelsOf = (w) => fs.readFileSync(`${w.cfg}.args.log`, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).map((a) => a[a.indexOf('--model') + 1]);
+
+await t('M1 models: the default is the exact Sonnet ID, a plan with model opus gets the exact Opus ID', async (c) => {
+  const w = build('m1', {});
+  editManifest(w, (m) => { m.plans[1].model = 'opus'; });
+  const r = await runRunner(w);
+  c(r.code === 0, `exit ${r.code}
+${r.out.slice(-600)}`);
+  const m = modelsOf(w);
+  c(m[0] === 'claude-sonnet-5-5' && m[1] === 'claude-opus-5-5' && m[2] === 'claude-sonnet-5-5', `models ${m.join(', ')}`);
+});
+
+await t('M2 --model haiku: every plan runs on the exact Haiku ID', async (c) => {
+  const w = build('m2', {});
+  const r = await runRunner(w, ['--model', 'haiku']);
+  c(r.code === 0, `exit ${r.code}
+${r.out.slice(-600)}`);
+  c(/--model: every plan runs on claude-haiku-5-5/.test(r.out), 'no --model line in the output');
+  const m = modelsOf(w).slice(0, 3);
+  c(m.length === 3 && m.every((x) => x === 'claude-haiku-5-5'), `models ${m.join(', ')}`);
+});
+
+await t('M3 --model with an exact ID is passed as it is, and beats the plan model', async (c) => {
+  const w = build('m3', {});
+  editManifest(w, (m) => { m.plans[0].model = 'opus'; });
+  const r = await runRunner(w, ['--model', 'claude-sonnet-4-6']);
+  c(r.code === 0, `exit ${r.code}
+${r.out.slice(-600)}`);
+  c(modelsOf(w).slice(0, 3).every((x) => x === 'claude-sonnet-4-6'), `models ${modelsOf(w).join(', ')}`);
+});
+
+await t('M4 --model without a name, or with an unknown name, is refused and nothing starts', async (c) => {
+  const w = build('m4', {});
+  const a = await runRunner(w, ['--model']);
+  c(a.code === 2 && /--model needs a name/.test(a.out), `no name: exit ${a.code}
+${a.out.slice(-300)}`);
+  const b = await runRunner(w, ['--model', 'gemini-3.8-flash-medium']);
+  c(b.code === 2 && /Unknown model/.test(b.out), `unknown: exit ${b.code}
+${b.out.slice(-300)}`);
+  c(!has(`${w.cfg}.args.log`), 'claude was started');
+});
+
+await t('M5 --dry-run shows the model of every plan and of the reviews, and starts nothing', async (c) => {
+  const w = build('m5', {});
+  const r = await runRunner(w, ['--dry-run', '--model', 'opus']);
+  c(r.code === 0 && /model=claude-opus-5-5/.test(r.out) && /Review sessions use claude-opus-5-5/.test(r.out), `exit ${r.code}
+${r.out.slice(-500)}`);
+  c(!has(`${w.cfg}.args.log`), 'claude was started');
+});
+
 const LIMIT = Number(process.env.CHAOS_PAR || 5);
 let qi = 0;
 await Promise.all(Array.from({ length: LIMIT }, async () => { while (qi < queue.length) await queue[qi++](); }));

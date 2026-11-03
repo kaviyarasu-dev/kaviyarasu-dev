@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Unattended plan runner for Antigravity CLI (agy). Same plan folders and manifest as the Claude Code runner.
-//   node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--no-isolation] [--from <plan id>]
+//   node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--no-isolation] [--from <plan id>] [--model <name>] [--no-switch]
 //   node run.mjs status <slug> [--repo <path>]
 // Run it from inside the main repo (or pass --repo). Plans live in <repo>/docs/plans/<slug>/.
 // Rules: one fresh `agy -p` session per plan, never trust "done", no step is ever skipped (every step must be
@@ -42,10 +42,12 @@ const flag = (n) => argv.includes(n);
 const opt = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
 const slug = argv[1] && !argv[1].startsWith('--') ? argv[1] : undefined;
 if (!['run', 'status'].includes(cmd) || !slug) {
-  console.log('Usage:\n  node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--no-isolation] [--from <plan id>]\n  node run.mjs status <slug> [--repo <path>]');
+  console.log('Usage:\n  node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--no-isolation] [--from <plan id>] [--model <name>] [--no-switch]\n  node run.mjs status <slug> [--repo <path>]');
   process.exit(2);
 }
 const noIsolation = flag('--no-isolation');
+const modelOverride = opt('--model'); // start every plan on this model (an agy name from "agy models", or sonnet/opus/haiku)
+if (flag('--model') && (!modelOverride || modelOverride.startsWith('--'))) { console.log('--model needs a name, for example --model claude-sonnet-4-6 (run "agy models" to see the list).'); process.exit(2); }
 
 const primary = toplevel(path.resolve(opt('--repo') || process.cwd()));
 if (!primary) { console.log('Not inside a git repository. Run from the main repo or pass --repo <path>.'); process.exit(2); }
@@ -252,7 +254,7 @@ async function main() {
 // ---------- agy, models, the throwaway HOME ----------
 function modelFor(plan) {
   const { modelsCfg, defaults } = ctx;
-  const name = plan.agy_model || plan.model || defaults.agy_model || defaults.model;
+  const name = modelOverride || plan.agy_model || plan.model || defaults.agy_model || defaults.model;
   return modelsCfg.models[name] || name;
 }
 function reviewModel() { return ctx.modelsCfg.models[ctx.modelsCfg.review] || ctx.modelsCfg.review; }
@@ -315,9 +317,9 @@ function preflight() {
   for (const m of need) if (!probe.slugs.includes(m)) refuse(`The model "${m}" is not available in agy. Run "agy models" and fix config/models.json or the manifest (model / agy_model). Available: ${probe.slugs.join(', ')}`);
   const wanted = ctx.modelsCfg.chain || [];
   for (const m of wanted) if (!probe.slugs.includes(m)) log('System', `WARN model "${m}" of the fallback chain is not in "agy models": it will be skipped.`);
-  ctx.chain = wanted.filter((m) => probe.slugs.includes(m));
+  ctx.chain = flag('--no-switch') ? [] : wanted.filter((m) => probe.slugs.includes(m));
   ctx.cool = new Map();
-  log('System', `agy OK. Models in use: ${[...need].join(', ')}.${ctx.chain.length > 1 ? ` On a usage limit the run switches along: ${ctx.chain.join(' -> ')}.` : ''}${noIsolation ? '' : ' Each session runs in its own throwaway HOME.'}`);
+  log('System', `agy OK. Models in use: ${[...need].join(', ')}.${modelOverride ? ` --model: every plan starts on ${modelFor({})}.` : ''}${flag('--no-switch') ? ' --no-switch: no other model is used; on a usage limit the run waits.' : ''}${ctx.chain.length > 1 ? ` On a usage limit the run switches along: ${ctx.chain.join(' -> ')}.` : ''}${noIsolation ? '' : ' Each session runs in its own throwaway HOME.'}`);
 }
 
 /** One agy session. review=true gives it read access only. */

@@ -1,0 +1,10 @@
+{
+  "_note": "Manifests say model: sonnet, opus or haiku. This maps those names to exact Claude model IDs, so a new model release never changes your runs until you edit this file. Run `node run.mjs run <slug> --model <name>` to use another model for one run: <name> is sonnet, opus or haiku, or any exact ID that starts with claude-. 'review' is the model of the read-only review sessions (the manifest can override it with review_model). Claude Code has no automatic switch to another model: when the usage limit is reached every model is blocked, so the runner waits (max_limit_wait_hours).",
+  "models": {
+    "sonnet": "claude-sonnet-5-5",
+    "opus": "claude-opus-5-5",
+    "haiku": "claude-haiku-5-5"
+  },
+  "default": "sonnet",
+  "review": "opus"
+}

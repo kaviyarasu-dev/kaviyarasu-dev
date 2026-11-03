@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Unattended plan runner for Claude Code.
-//   node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--from <plan id>]
+//   node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--from <plan id>] [--model <name>]
 //   node run.mjs status <slug> [--repo <path>]
 // Run it from inside the main repo (or pass --repo). Plans live in <repo>/docs/plans/<slug>/.
 // Rules: one fresh `claude -p` session per plan, never trust "done", no step is ever skipped (every step must be
@@ -36,9 +36,21 @@ const flag = (n) => argv.includes(n);
 const opt = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
 const slug = argv[1] && !argv[1].startsWith('--') ? argv[1] : undefined;
 if (!['run', 'status'].includes(cmd) || !slug) {
-  console.log('Usage:\n  node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--from <plan id>]\n  node run.mjs status <slug> [--repo <path>]');
+  console.log('Usage:\n  node run.mjs run <slug> [--repo <path>] [--dry-run] [--reset] [--from <plan id>] [--model <name>]\n  node run.mjs status <slug> [--repo <path>]');
   process.exit(2);
 }
+// Model names: config/models.json maps sonnet / opus / haiku to exact Claude model IDs. --model uses one model for the whole run.
+const modelsCfg = readJson(path.join(HERE, 'config', 'models.json'), { models: {}, default: 'sonnet', review: 'opus' });
+const modelId = (name) => modelsCfg.models[name] || name;
+const modelOverride = opt('--model');
+if (flag('--model')) {
+  const known = Object.keys(modelsCfg.models).join(', ');
+  if (!modelOverride || modelOverride.startsWith('--')) { console.log(`--model needs a name: ${known}, or an exact model ID such as ${modelId('sonnet')}.`); process.exit(2); }
+  if (!modelsCfg.models[modelOverride] && !/^claude-/.test(modelOverride)) { console.log(`Unknown model "${modelOverride}". Use ${known}, or an exact model ID that starts with claude-.`); process.exit(2); }
+}
+/** The model of a plan's session: --model wins, then the plan, then the manifest default. Always an exact ID. */
+const planModel = (plan, defaults) => modelId(modelOverride || plan.model || defaults.model);
+const reviewModel = (manifest) => modelId(manifest.review_model || modelsCfg.review || 'opus');
 
 const primary = toplevel(path.resolve(opt('--repo') || process.cwd()));
 if (!primary) { console.log('Not inside a git repository. Run from the main repo or pass --repo <path>.'); process.exit(2); }
@@ -87,8 +99,9 @@ async function main() {
     refuse('docs/plans/<slug>/_planning/STATE.md must say "phase: plans-approved". Finish /plan-split first.');
   }
   const manifest = readJson(path.join(planDir, 'manifest.json'));
-  const defaults = { max_attempts: 3, max_turns: 60, timeout_min: 45, idle_min: 10, model: 'sonnet', ...(manifest.defaults || {}) };
+  const defaults = { max_attempts: 3, max_turns: 60, timeout_min: 45, idle_min: 10, model: modelsCfg.default || 'sonnet', ...(manifest.defaults || {}) };
   const every = manifest.full_gates_every ?? 5;
+  if (modelOverride) log('System', `--model: every plan runs on ${modelId(modelOverride)}.`);
 
   // 2. repos
   const names = [...new Set(manifest.plans.flatMap((p) => p.repos))];
@@ -201,7 +214,8 @@ async function main() {
 
   if (flag('--dry-run')) {
     log('System', 'Dry run. Order of plans:');
-    for (const p of manifest.plans) log('System', `  ${p.id} ${p.file} [${p.repos.join(',')}] model=${p.model || defaults.model} est_turns=${p.est_turns} steps=${p.steps.length}`);
+    log('System', `Review sessions use ${reviewModel(manifest)}.`);
+    for (const p of manifest.plans) log('System', `  ${p.id} ${p.file} [${p.repos.join(',')}] model=${planModel(p, defaults)} est_turns=${p.est_turns} steps=${p.steps.length}`);
     return;
   }
 
@@ -248,7 +262,7 @@ async function executePlan(plan, ps) {
   const planRunDir = path.join(runDir, 'plans', plan.id);
   fs.mkdirSync(planRunDir, { recursive: true });
   ps.failures ||= []; ps.patches ||= [];
-  log('System', `=== Plan ${plan.id}: ${plan.file} (${plan.steps.length} steps, est ${plan.est_turns} turns, ${plan.model || defaults.model}) ===`);
+  log('System', `=== Plan ${plan.id}: ${plan.file} (${plan.steps.length} steps, est ${plan.est_turns} turns, ${planModel(plan, defaults)}) ===`);
 
   if (ps.status === 'pending') {
     Object.assign(ps, { status: 'running', startedAt: new Date().toISOString(), startTrees: snapAll(), hash: planHash(plan), stepsHash: stepsHash(plan) });
@@ -300,7 +314,7 @@ async function executePlan(plan, ps) {
     const guard = { hooks: { PreToolUse: [{ matcher: 'Write|Edit|MultiEdit|NotebookEdit|Read', hooks: [{ type: 'command', command: `node "${toPosix(path.join(HERE, 'lib', 'file-guard.mjs'))}"` }] }] } };
     const args = ['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--strict-mcp-config',
       '--setting-sources', 'project,local', '--settings', JSON.stringify(guard), '--permission-mode', 'dontAsk', '--max-turns', String(maxTurns),
-      '--model', plan.model || defaults.model, '--json-schema', JSON.stringify(REPORT_SCHEMA),
+      '--model', planModel(plan, defaults), '--json-schema', JSON.stringify(REPORT_SCHEMA),
       '--add-dir', ...extraDirs, '--allowedTools', ...allow, '--disallowedTools', ...deny];
 
     log('System', `Starting claude for ${plan.file}... (session ${ps.sessionNo}, ${stepName(curStep)} try ${ps.tries + 1}/${maxTries}${lastStep ? `, resuming after step ${lastStep}` : ''})`);
@@ -652,7 +666,7 @@ Read the plan, the documents and the diffs (open the changed files when you need
 4. Security in this diff: who can call it, identity from the server session, input validation, injection, secrets, money or prices in floating point.
 
 Severity: "critical" or "high" ONLY when the plan's goal is not really met, a check proves nothing, or the code is unsafe. Style, naming and nice-to-haves are "medium" or "low". "verdict" is "fail" when there is any critical or high problem, else "pass". Give the file and a concrete fix for each problem. Do not edit anything. End with the JSON answer only.`;
-  const run = () => reviewSession({ prompt, rawLog: path.join(planRunDir, `review-${ps.sessionNo}.jsonl`), model: manifest.review_model || 'opus', turns: 30 });
+  const run = () => reviewSession({ prompt, rawLog: path.join(planRunDir, `review-${ps.sessionNo}.jsonl`), model: reviewModel(manifest), turns: 30 });
   let rv = await run();
   if (!rv.ok) { log('System', `The plan review gave no valid answer (${rv.failure}). Trying it once more.`); rv = await run(); }
   if (!rv.ok) {
@@ -676,7 +690,7 @@ async function finalReview() {
 ${docs.length ? `The architecture and the map of what was built: ${docs.join(', ')}\n` : ''}
 The diff may be large: use Grep to find what matters instead of reading it all. Review the changes for security, privacy and production problems: who can call each endpoint, whether identity comes from the server session, authorization on every object, input validation, injection, exposed personal data or secrets, money handled in floating point, missing rate limits on login and money movements, missing idempotency on payments and orders, missing audit logs, and new dependencies. Do not edit anything. "critical" or "high" only for a real exploitable or data-losing problem. "verdict" is "fail" when there is any critical or high problem. End with the JSON answer only.`;
   log('System', 'Starting claude for the final review...');
-  const rv = await reviewSession({ prompt, rawLog: path.join(runDir, 'final-review.jsonl'), model: manifest.review_model || 'opus', turns: 40 });
+  const rv = await reviewSession({ prompt, rawLog: path.join(runDir, 'final-review.jsonl'), model: reviewModel(manifest), turns: 40 });
   st.finalReview = rv.ok ? rv.text : `(the final review did not finish: ${rv.failure})`;
   saveState(runDir, st);
   if (!ctx.reviewBlocks) return;

@@ -229,6 +229,31 @@ ${r.out.slice(-800)}`);
   c(usedModels(w).slice(0, 2).join() === 'gemini-3.8-flash-medium,gpt-oss-120b-medium', `models ${usedModels(w).join(', ')}`);
 });
 
+await t('07e --model: every plan starts on the chosen model, and the chain goes on after it', async (c) => {
+  const w = build('switchpick', { cfg: { '001': { modes: ['quota', 'ok'] } } });
+  const r = await runRunner(w, ['--model', 'claude-sonnet-4-6'], { FAKE_MODELS: FULL_CHAIN });
+  c(r.code === 0, `exit ${r.code}
+${r.out.slice(-800)}`);
+  const m = usedModels(w).filter((x) => !/opus/.test(x));
+  c(m[0] === 'claude-sonnet-4-6' && m[1] === 'gpt-oss-120b-medium', `models ${m.join(', ')}`);
+});
+
+await t('07f --no-switch: a usage limit waits, no other model is used', async (c) => {
+  const w = build('noswitch', { cfg: { '001': { modes: ['quota', 'ok'] } } });
+  const r = await runRunner(w, ['--no-switch'], { FAKE_MODELS: FULL_CHAIN });
+  c(r.code === 0, `exit ${r.code}
+${r.out.slice(-800)}`);
+  c(/Usage limit reached\. Waiting/.test(r.out), 'did not wait');
+  c(usedModels(w).filter((x) => !/opus/.test(x)).every((x) => x === 'gemini-3.8-flash-medium'), `models ${usedModels(w).join(', ')}`);
+});
+
+await t('07g --model without a name is refused before anything starts', async (c) => {
+  const w = build('modelnoname', {});
+  const r = await runRunner(w, ['--model']);
+  c(r.code === 2 && /--model needs a name/.test(r.out), `exit ${r.code}
+${r.out.slice(-300)}`);
+});
+
 await t('08 BLOCKED.md: halts, plan marked blocked, tree restored', async (c) => {
   const w = build('blocked', { cfg: { '001': { modes: ['blocked'] } } });
   const r = await runRunner(w);

@@ -109,7 +109,7 @@ node $HOME/.claude/tools/plan-runner/run.mjs run <slug>
 ```
 
 - **Note:** Write `$HOME`, not `~`. PowerShell does not understand `~` here.
-- **What happens:** Each plan runs in its own fresh Claude session. Each step has a check. A failed step is rolled back. Each step gets 3 tries. At the end of an epic, it pauses at a milestone.
+- **What happens:** Each plan runs in its own fresh Claude session. Each step has a check. A failed step is rolled back. Each step gets 3 tries. At the end of an epic, it pauses at a milestone. It runs on `claude-sonnet-5-5`; to use another model, see [Which model runs](#which-model-runs).
 - **You:** Watch. When it pauses, look at the app.
 
 ### 5. Milestone pause, or a failure 💬
@@ -262,6 +262,32 @@ Every failed try is saved in `plans/<id>/failures.log`.
 
 ---
 
+## Which model runs
+
+The runner uses these exact Claude models. The names are set in `$HOME/.claude/tools/plan-runner/config/models.json`.
+
+| Name in the plan | Exact model ID | Use it for |
+|---|---|---|
+| `sonnet` (the default) | `claude-sonnet-5-5` | Most plans |
+| `opus` | `claude-opus-5-5` | A plan that is really hard. Also used by the review sessions. |
+| `haiku` | `claude-haiku-5-5` | Very small, simple plans |
+
+**Choose the model for one run** 🖥️ with `--model`. It works for every plan of that run:
+
+```
+node $HOME/.claude/tools/plan-runner/run.mjs run <slug> --model opus
+node $HOME/.claude/tools/plan-runner/run.mjs run <slug> --model claude-sonnet-5-5
+```
+
+- You can write the short name (`sonnet`, `opus`, `haiku`) or an exact ID that starts with `claude-`. Any other name is refused before anything starts.
+- Without `--model`, each plan uses its own `model` from the manifest, or `sonnet` if it has none.
+- `--model` does not change the review sessions. They always use `opus`, unless the manifest has `review_model`.
+- To see the models before you run: add `--dry-run`. It prints the model of every plan and of the reviews, and runs nothing.
+- **There is no automatic switch to another model.** When the usage limit is reached, every Claude model is blocked, so another model would not help. The runner waits, then goes on with the same model. If you want a different model after a restart, run the command again with `--model`.
+- `/grill-me` and `/goal` have no model set. In the chat, choose Sonnet yourself with `/model sonnet`.
+
+---
+
 ## Cheat sheet
 
 | Command | What it does |
@@ -275,5 +301,6 @@ Every failed try is saved in `plans/<id>/failures.log`.
 | `run.mjs status <slug>` | Shows where the run is. Runs nothing. |
 | `run.mjs run <slug> --dry-run` | Shows what would happen. Runs nothing. |
 | `run.mjs run <slug> --reset` | Starts again from the beginning (repos must be clean). |
+| `run.mjs run <slug> --model <name>` | Runs every plan on one model: `sonnet` (`claude-sonnet-5-5`), `opus` (`claude-opus-5-5`) or `haiku` (`claude-haiku-5-5`). |
 
 Remember: the runner never commits and never pushes. After it finishes, you check the diff and commit it yourself.
