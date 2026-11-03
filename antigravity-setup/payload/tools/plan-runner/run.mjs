@@ -257,6 +257,28 @@ function modelFor(plan) {
 }
 function reviewModel() { return ctx.modelsCfg.models[ctx.modelsCfg.review] || ctx.modelsCfg.review; }
 
+/** The models to try, best first, for a session that wants `model`: the rest of the chain from it, or it and then the whole chain. */
+function chainFor(model) {
+  const chain = ctx.chain || [];
+  const i = chain.indexOf(model);
+  return i >= 0 ? chain.slice(i) : [model, ...chain];
+}
+function coolUntil(m) { return ctx.cool.get(m) || 0; }
+/** The first model of the chain that is not resting after a limit. When all rest, the one that recovers first (the caller waits on a limit). */
+function pickModel(model) {
+  const list = chainFor(model);
+  return list.find((m) => coolUntil(m) <= Date.now()) || list.reduce((a, b) => (coolUntil(b) < coolUntil(a) ? b : a));
+}
+/** A session on `facts.model` hit a limit: rest that model, and return the next free model of the chain, or null when none is left. */
+function switchAfterLimit(facts, wanted) {
+  const fast = !!process.env.PLAN_RUNNER_FAST; // tests only
+  const rest = fast ? 30000 : Math.max(60000, retryAfterMs(facts) ?? (ctx.modelsCfg.cooldown_minutes ?? 15) * 60000);
+  ctx.cool.set(facts.model, Date.now() + rest);
+  const next = chainFor(wanted).find((m) => coolUntil(m) <= Date.now());
+  if (next) log('System', `${facts.model} hit its usage limit (rests ${fmtDuration(rest)}). Switching to ${next} and going on with the same plan; no try used.`);
+  return next || null;
+}
+
 function homeDir(review = false) { return path.join(runDir, review ? 'agy-home-review' : 'agy-home'); }
 
 /** What the guard needs to keep file writes inside the project and out of the plan folder. */
@@ -291,7 +313,11 @@ function preflight() {
   if (!probe.ok) refuse(`agy could not start${noIsolation ? '' : ' in its isolated HOME'}: ${probe.error}${noIsolation ? '' : '\nIf agy cannot sign in from the isolated HOME on this computer, run with --no-isolation (then the session itself is not restricted).'}`);
   const need = new Set([...(reviews(manifest) ? [reviewModel()] : []), ...manifest.plans.map(modelFor)]);
   for (const m of need) if (!probe.slugs.includes(m)) refuse(`The model "${m}" is not available in agy. Run "agy models" and fix config/models.json or the manifest (model / agy_model). Available: ${probe.slugs.join(', ')}`);
-  log('System', `agy OK. Models in use: ${[...need].join(', ')}.${noIsolation ? '' : ' Each session runs in its own throwaway HOME.'}`);
+  const wanted = ctx.modelsCfg.chain || [];
+  for (const m of wanted) if (!probe.slugs.includes(m)) log('System', `WARN model "${m}" of the fallback chain is not in "agy models": it will be skipped.`);
+  ctx.chain = wanted.filter((m) => probe.slugs.includes(m));
+  ctx.cool = new Map();
+  log('System', `agy OK. Models in use: ${[...need].join(', ')}.${ctx.chain.length > 1 ? ` On a usage limit the run switches along: ${ctx.chain.join(' -> ')}.` : ''}${noIsolation ? '' : ' Each session runs in its own throwaway HOME.'}`);
 }
 
 /** One agy session. review=true gives it read access only. */
@@ -307,10 +333,13 @@ async function agySession(o) {
     fs.rmSync(deniedLog, { force: true });
     env = sessionEnv(process.env, vars, homeDir(o.review));
   }
-  const args = ['--model', o.model];
+  const model = pickModel(o.model);
+  if (model !== o.model) log('System', `Using ${model} (${o.model} is resting after a usage limit).`);
+  const args = ['--model', model];
   if (o.schemaFile) args.push('--json-schema', o.schemaFile);
   for (const d of o.extraDirs) args.push('--add-dir', d);
   const facts = await runAgy({ args, prompt: o.prompt, cwd: o.cwd, env, idleMs: o.idleMs, timeoutMs: o.timeoutMs, maxToolSteps: o.maxToolSteps, rawLog: o.rawLog, stopAfterCheckpoint: o.stopAfterCheckpoint });
+  facts.model = model;
   facts.refused = [];
   if (deniedLog && fs.existsSync(deniedLog)) {
     facts.refused = fs.readFileSync(deniedLog, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
@@ -406,6 +435,7 @@ async function executePlan(plan, ps) {
 
     // (a) usage limit or spent credits: wait, do not count a try
     if (quotaError(facts)) {
+      if (switchAfterLimit(facts, modelFor(plan))) continue; // another model of the chain is free: go on at once
       ps.limitWaits = (ps.limitWaits || 0) + 1; // no count limit: agy gives no reset time, so waitForLimit caps the total wait
       await waitForLimit(facts);
       continue;
@@ -681,7 +711,10 @@ async function reviewSession({ prompt, rawLog, maxToolSteps }) {
       sessionFile: path.join(runDir, 'session.json'), idleMs: 10 * 60000, timeoutMs: 30 * 60000, maxToolSteps, rawLog,
     });
   } catch (e) { return { ok: false, failure: `the review could not run safely (${e.message})` }; }
-  if (quotaError(facts)) { await waitForLimit(facts); return reviewSession({ prompt, rawLog, maxToolSteps }); }
+  if (quotaError(facts)) {
+    if (!switchAfterLimit(facts, reviewModel())) await waitForLimit(facts);
+    return reviewSession({ prompt, rawLog, maxToolSteps });
+  }
   const r = facts.result;
   const rv = checkReview(extractReport(r?.structured_output, r?.response, 'verdict'));
   return rv.ok ? rv : { ...rv, failure: `${rv.failure}${facts.killedFor || !r ? ` (${describeFailure(facts)})` : ''}` };

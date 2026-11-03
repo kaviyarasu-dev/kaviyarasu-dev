@@ -321,7 +321,8 @@ Where is it? `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md`. A copy is also 
 | `REFUSED TO START: The model "..." is not available` | The model name in `config/models.json` or in the manifest is not in `agy models` | Fix the name |
 | `agy could not start in its isolated HOME` | agy could not sign in or start in the throwaway HOME (a risk on macOS and Linux) | Run `agy` once normally, or use `--no-isolation` |
 | `This manifest is in the OLD Antigravity format` | The plan folder was made by the first Antigravity setup | Run `/plan-split <slug>` again |
-| `Usage limit reached. Waiting ...` | Your quota or credits ran out | Leave it. It waits and tries again. It does not use up a try. |
+| `... hit its usage limit ... Switching to ...` | One model ran out, so the run goes on with the next model | Leave it. No try is used. |
+| `Usage limit reached. Waiting ...` | Every model in the chain ran out | Leave it. It waits and tries again. It does not use up a try. |
 | The session is "BLOCKED" | It needed something that is not allowed, or the plan is not clear | Read the reason in the report. Fix the plan or the rule. Run again. |
 
 ---
@@ -329,6 +330,9 @@ Where is it? `$HOME/.gemini/plan-runs/<repo>__<slug>/REPORT.md`. A copy is also 
 ## How the agy runner is different from the Claude runner
 
 - The plan folder and the manifest are the same. In the manifest, `model: sonnet` and `opus` are mapped to agy models in `tools/plan-runner/config/models.json`.
+- **Model order.** `tools/plan-runner/config/models.json` has a `chain`: Gemini 3.8 Flash (Medium), then Claude Sonnet 4.6, then GPT-OSS 120B. When a model hits its usage limit, the same plan goes on with the next one, and no try is used. The model that ran out rests for 15 minutes (`cooldown_minutes`), so a new plan starts on Gemini again. When all three are out, the runner waits. This works only in the runner. A normal `agy` chat cannot switch by itself: use `/model`.
+- The review sessions use `review` in the same file (now `opus`). If that model runs out, they use the chain too.
+- `/grill-me` and `/goal` on Sonnet in a normal chat: start agy with the model, for example `agy --model claude-sonnet-4-6 "/grill-me <topic>"`. The skills are not changed.
 - Each session runs in its own throwaway HOME, with a generated settings file and a safety hook. The reason: agy has no "refuse instead of ask" flag and no way to skip your own plugins and rules.
 - agy counts tool calls, not turns. So the runner counts tool calls itself (about 3 per manifest turn).
 - agy says SUCCESS even when a tool call was refused. So the runner trusts only its own checks. If a session commits or switches branch, the run stops.

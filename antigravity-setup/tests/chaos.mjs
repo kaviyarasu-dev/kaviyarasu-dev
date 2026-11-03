@@ -130,7 +130,7 @@ await t('01 happy path: 3 plans done, nothing committed, logs look right', async
   const sessions = argLog(w).filter((a) => a.argv.includes('-p'));
   c(sessions.length >= 4, `expected 3 plan sessions + a final review, saw ${sessions.length}`);
   const a = sessions[0];
-  c(a.argv.includes('--model') && a.argv[a.argv.indexOf('--model') + 1] === 'gemini-3.8-flash-high', `model flag: ${a.argv}`);
+  c(a.argv.includes('--model') && a.argv[a.argv.indexOf('--model') + 1] === 'gemini-3.8-flash-medium', `model flag: ${a.argv}`);
   c(a.argv.includes('stream-json') && a.argv.includes('--output-format'), 'output format flag missing');
   c(a.home !== REAL_HOME && a.home.startsWith(w.runDir), `the session did not get its own HOME: ${a.home}`);
   c(a.guardFiles.length === 4, `guard files missing in the session home: ${a.guardFiles}`);
@@ -192,6 +192,41 @@ await t('07 usage limit / spent credits (AGY_ERROR, exit 3): waits, retries, no 
   c(r.code === 0, `exit ${r.code}\n${r.out.slice(-800)}`);
   c(/Usage limit reached\. Waiting/.test(r.out), 'did not wait');
   c(state(w).plans['001'].attempts === 0, `attempts ${state(w).plans['001'].attempts}`);
+});
+
+const FULL_CHAIN = JSON.stringify(['gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'claude-sonnet-4-6', 'gpt-oss-120b-medium', 'claude-opus-4-6-thinking']);
+const usedModels = (w) => argLog(w).map((a) => a.argv[a.argv.indexOf('--model') + 1]);
+
+await t('07b usage limit on Gemini: goes on at once with Claude Sonnet, no wait, no attempt used', async (c) => {
+  const w = build('switch', { cfg: { '001': { modes: ['quota', 'ok'] } } });
+  const r = await runRunner(w, [], { FAKE_MODELS: FULL_CHAIN });
+  c(r.code === 0, `exit ${r.code}
+${r.out.slice(-800)}`);
+  c(/Switching to claude-sonnet-4-6/.test(r.out), 'no switch to Sonnet logged');
+  c(!/Usage limit reached\. Waiting/.test(r.out), 'waited although another model was free');
+  const m = usedModels(w);
+  c(m[0] === 'gemini-3.8-flash-medium' && m[1] === 'claude-sonnet-4-6', `models ${m.join(', ')}`);
+  c(state(w).plans['001'].attempts === 0, `attempts ${state(w).plans['001'].attempts}`);
+});
+
+await t('07c Gemini and Sonnet both out: GPT-OSS; all out: waits; then Gemini is tried first again', async (c) => {
+  const w = build('switch3', { plans: undefined, cfg: { '001': { modes: ['quota', 'quota', 'quota', 'ok'] } } });
+  const r = await runRunner(w, [], { FAKE_MODELS: FULL_CHAIN });
+  c(r.code === 0, `exit ${r.code}
+${r.out.slice(-800)}`);
+  const m = usedModels(w);
+  c(m.slice(0, 4).join() === 'gemini-3.8-flash-medium,claude-sonnet-4-6,gpt-oss-120b-medium,gemini-3.8-flash-medium', `models ${m.join(', ')}`);
+  c(/Usage limit reached\. Waiting/.test(r.out), 'did not wait when every model was out');
+  c(m.slice(4).filter((x) => !/opus/.test(x)).every((x) => x === 'gemini-3.8-flash-medium'), `later plans did not start on Gemini: ${m.join(', ')}`);
+});
+
+await t('07d a chain model missing from agy models is skipped with a warning', async (c) => {
+  const w = build('switchmiss', { cfg: { '001': { modes: ['quota', 'ok'] } } });
+  const r = await runRunner(w, [], { FAKE_MODELS: JSON.stringify(['gemini-3.8-flash-medium', 'gpt-oss-120b-medium', 'claude-opus-4-6-thinking']) });
+  c(r.code === 0, `exit ${r.code}
+${r.out.slice(-800)}`);
+  c(/WARN model "claude-sonnet-4-6"/.test(r.out), 'no warning for the missing model');
+  c(usedModels(w).slice(0, 2).join() === 'gemini-3.8-flash-medium,gpt-oss-120b-medium', `models ${usedModels(w).join(', ')}`);
 });
 
 await t('08 BLOCKED.md: halts, plan marked blocked, tree restored', async (c) => {

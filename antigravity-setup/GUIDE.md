@@ -84,7 +84,8 @@ The runner never commits. When it finishes, review the diff in each repo and com
 | `REFUSED TO START: The model "..." is not available` | a model name in `config/models.json` or the manifest is not in `agy models` | fix the name |
 | `agy could not start in its isolated HOME` | agy could not sign in or start there (seen as a risk on macOS and Linux) | run `agy` once normally, or use `--no-isolation` |
 | `This manifest is in the OLD Antigravity format` | the plan folder was made by the first Antigravity setup | run `/plan-split <slug>` again |
-| `Usage limit reached. Waiting ...` | quota or credits ran out | leave it: it waits and retries without using a try |
+| `... hit its usage limit ... Switching to ...` | one model ran out | leave it: the run goes on with the next model (Gemini Medium, then Claude Sonnet 4.6, then GPT-OSS), no try used |
+| `Usage limit reached. Waiting ...` | every model in the chain ran out | leave it: it waits and retries without using a try |
 | the session is "BLOCKED" | it needed something it was not allowed to do, or the plan is unclear | read the reason in the report, fix the plan or the rule, run again |
 
 ## 7. Differences from the Claude Code runner

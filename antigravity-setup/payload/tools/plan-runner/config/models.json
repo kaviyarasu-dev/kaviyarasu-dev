@@ -1,10 +1,12 @@
 {
-  "_note": "Manifests written for the Claude runner say model: sonnet or opus. This maps those names to agy model names (run `agy models` to see the list). A manifest may also name an agy model directly, or set agy_model on a plan or in defaults. The runner checks every model against `agy models` before it starts.",
+  "_note": "Manifests written for the Claude runner say model: sonnet or opus. This maps those names to agy model names (run `agy models` to see the list). A manifest may also name an agy model directly, or set agy_model on a plan or in defaults. The runner checks every model against `agy models` before it starts. 'chain' is the order of models used when one runs out of usage: a session starts on the model the plan asks for, and when that model hits its limit the same plan goes on with the next model in the chain, without using a try. A model that hit its limit is skipped for cooldown_minutes (or the wait the server asked for), then used again, so the next plan starts on the first model of the chain again. When every model in the chain is out, the runner waits as before (max_limit_wait_hours). A chain model that is not in `agy models` is skipped with a warning. The effort is part of the model name (gemini-3.8-flash-medium), so no --effort flag is needed.",
   "models": {
-    "sonnet": "gemini-3.8-flash-high",
+    "sonnet": "gemini-3.8-flash-medium",
     "opus": "claude-opus-4-6-thinking",
     "haiku": "gemini-3.8-flash-low"
   },
   "default": "sonnet",
-  "review": "opus"
+  "review": "opus",
+  "chain": ["gemini-3.8-flash-medium", "claude-sonnet-4-6", "gpt-oss-120b-medium"],
+  "cooldown_minutes": 15
 }
